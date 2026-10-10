@@ -1,0 +1,106 @@
+<misterromdescription>
+    <rotation>horizontal</rotation>
+    <name>Kyukyoku Sentai Dadandarn (Japan ver JAA)</name>
+    <setname>dadandrn</setname>
+    <mameversion>0289</mameversion>
+    <year>1993</year>
+    <manufacturer>Konami</manufacturer>
+    <players>2</players>
+    <joystick>8</joystick>
+    <rbf>monstermaulers</rbf>
+    <region>Japan</region>
+    <platform>Konami pre-GX</platform>
+
+    <!--
+      Flat image for the Monster Maulers core (target/mister/mm_mem.sv):
+
+        0x0000000  0x200000  68000 program (1.5 MB, zero padded to the 2 MB the map decodes)
+        0x0200000  0x040000  Z80 sound program, 16 x 16 KB banks
+        0x0240000  0x400000  K056832 tile ROM, 5bpp: per 8-pixel row an 8-byte group
+                             (4 chunky bytes, the fifth plane byte, 3 zero)
+        0x0640000  0x180000  ROZ characters (gfx3), 8bpp 16x16
+        0x07C0000  0x080000  ROZ tile map (gfx4): 256 KB of attributes, then 256 KB of tile low bytes
+        0x0840000  0x400000  K054539 PCM
+        0x0C40000  0x800000  K055673 sprite ROM, 64-bit words: a 16-pixel row of the four low planes
+        0x1440000  0x200000  K055673 fifth plane, a 16-bit word per row (left 8 pixels, right 8)
+        0x1640000            end
+
+      Expects the MAME 0.289 merged romset (mmaulers.zip holding the parent and the
+      two clones) or the split sets: parts are found by name, whatever folder holds them.
+    -->
+    <rom index="0" zip="dadandrn.zip|mmaulers.zip" md5="None">
+
+        <!-- 68000 program, 16-bit big-endian words: the even byte is the first ROM -->
+        <interleave output="16">
+            <part name="170jaa07.24m" crc="6a55e828" map="01"/>
+            <part name="170jaa09.19l" crc="9e821cd8" map="10"/>
+        </interleave>
+        <interleave output="16">
+            <part name="170a08.21m" crc="03c59ba2" map="01"/>
+            <part name="170a10.17l" crc="8a340909" map="10"/>
+        </interleave>
+        <part repeat="0x80000">00</part>
+
+        <!-- Z80 sound program -->
+        <part name="170a13.9c" crc="2ebf4d1c"/>
+
+        <!--
+          K056832 tile ROM. MAME's ROM_LOADTILE_WORD is ROM_GROUPWORD|ROM_SKIP(3)|ROM_REVERSE
+          and ROM_LOADTILE_BYTE is ROM_GROUPBYTE|ROM_SKIP(4): 5-byte groups, one per 8-pixel
+          row, 4 packed-chunky bytes (the low 4 bits of the pixel) and the 5th plane's byte,
+          which holds bit 4 of each of the row's 8 pixels (pixel 0 in bit 7). Padded to 8 bytes.
+        -->
+        <interleave output="64">
+            <part name="170a16.2t" crc="41fee912" map="00000012"/>
+            <part name="170a17.2x" crc="96957c91" map="00001200"/>
+            <part name="170a24.5r" crc="562ad4bd" map="00010000"/>
+        </interleave>
+
+        <!-- ROZ character ROM (gfx3), 8bpp 16x16, one byte a pixel -->
+        <part name="170a04.33n" crc="64b9a73b"/>
+        <part name="170a05.30n" crc="f2c101d0"/>
+        <part name="170a06.27n" crc="b032e59b"/>
+
+        <!-- ROZ tilemap ROM (gfx4): per tile, an attribute byte (flip, tile bits 12:8) and the tile's low byte -->
+        <part name="170a02.34j" crc="b040cebf"/>
+        <part name="170a03.36m" crc="7fb412b2"/>
+
+        <!-- K054539 PCM samples, shared by both chips -->
+        <part name="170a14.2g" crc="83317cda"/>
+        <part name="170a15.2m" crc="d4113ae9"/>
+
+        <!--
+          K055673 sprite ROM, 64-bit words (ROM_LOAD64_WORD, 8-byte stride): one 64-bit word
+          is the four low planes of one 16-pixel row (left 8 pixels in bytes 0-3, right 8 in
+          bytes 4-7, one byte a plane).
+        -->
+        <interleave output="64">
+            <part name="170a19.34u" crc="be835141" map="00000021"/>
+            <part name="170a21.34y" crc="bcb68136" map="00002100"/>
+            <part name="170a18.36u" crc="e1e3c8d2" map="00210000"/>
+            <part name="170a20.36y" crc="ccb4d88c" map="21000000"/>
+        </interleave>
+        <!-- the fifth plane (ROM_LOAD16_BYTE at 0x800000): per row, the left and the right 8 pixels' byte -->
+        <interleave output="16">
+            <part name="170a23.29y" crc="6b5390e4" map="01"/>
+            <part name="170a22.32y" crc="21628106" map="10"/>
+        </interleave>
+    </rom>
+
+    <!-- the board's factory EEPROM: without it the game boots upside down with an error -->
+    <rom index="2">
+        <part>
+04 10 FB EF 91 70 4A 41 41 00 00 00 00 00 00 00
+02 03 00 00 28 00 00 00 00 00 11 01 00 00 00 00
+01 01 01 01 00 00 00 01 01 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+        </part>
+    </rom>
+    <nvram index="2" size="128"/>
+
+    <buttons names="Button 1,Button 2,Button 3,Start,Coin" default="A,B,R,Start,Select" count="3"/>
+</misterromdescription>

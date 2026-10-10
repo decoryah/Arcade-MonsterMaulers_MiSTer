@@ -1,0 +1,42 @@
+set_global_assignment -name SYSTEMVERILOG_FILE MonsterMaulers.sv
+set_global_assignment -name SDC_FILE MonsterMaulers.sdc
+
+# the machine (the machine)
+set_global_assignment -name SEARCH_PATH rtl/data
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/clk_enables.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/dbg_overlay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/er5911.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mm_core.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mm_main.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mm_sound.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mm_video.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/k053247_draw.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/k053247_objlist.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/k053936_roz.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/k054321.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/k054539.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mm_mixer.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/k056832_tilemap.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_arb2.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/rom_arb2.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sprite_tables.sv
+
+# TG68K.C 68000 kernel (LGPL, Tobias Gubener), GHDL-converted
+set_global_assignment -name VERILOG_FILE modules/cpu-tg68k/gen/tg68k.v
+# tv80 Z80 (MIT, Guy Hutchison)
+set_global_assignment -name VERILOG_FILE modules/cpu-tv80/tv80_alu.v
+set_global_assignment -name VERILOG_FILE modules/cpu-tv80/tv80_core.v
+set_global_assignment -name VERILOG_FILE modules/cpu-tv80/tv80_mcode.v
+set_global_assignment -name VERILOG_FILE modules/cpu-tv80/tv80_reg.v
+set_global_assignment -name VERILOG_FILE modules/cpu-tv80/tv80s_cen.v
+set_global_assignment -name VERILOG_FILE modules/cpu-tv80/tv80s.v
+# CRT Adjust (GPL-3.0, rmonic79): analog picture size and position
+set_global_assignment -name SYSTEMVERILOG_FILE modules/crt-adjust/crt_adjust.sv
+
+# MiSTer platform layer
+set_global_assignment -name SYSTEMVERILOG_FILE target/mister/mm_mem.sv
+set_global_assignment -name SYSTEMVERILOG_FILE target/mister/rom_cache.sv
+set_global_assignment -name SYSTEMVERILOG_FILE target/mister/mem_test.sv
+set_global_assignment -name SYSTEMVERILOG_FILE target/mister/sdram_ctrl.sv
+set_global_assignment -name SYSTEMVERILOG_FILE target/mister/ddr_arb.sv
+set_global_assignment -name SYSTEMVERILOG_FILE target/mister/flip_buf.sv
