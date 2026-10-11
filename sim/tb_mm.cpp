@@ -180,6 +180,7 @@ int main(int argc, char **argv) {
     unsigned irq = 0, zsteps = 0, dma_clk = 0, overruns = 0, de_px = 0;
     bool irq_seen = false, prev_irq = false;
     unsigned vc_last = 0xffff;
+    bool lat_in = false; unsigned long long lat_t0 = 0; std::map<unsigned, unsigned> lat_hist;
     unsigned last_pc = 0;
     std::map<unsigned, unsigned> pc_hist;
     unsigned in0 = 0xffff;
@@ -246,6 +247,13 @@ int main(int argc, char **argv) {
                 }
             }
         }
+        {   // the sprite ROM port's latency, request to ack (the memory subsystem under the machine's own traffic)
+            auto &r = *dut->rootp;
+            bool sr = r.tb_mm_top__DOT__chk_spr_req, sa = r.tb_mm_top__DOT__chk_spr_ack;
+            if (sr && !lat_in) { lat_in = true; lat_t0 = cycles; }
+            if (sa && lat_in) { lat_hist[(unsigned)(cycles - lat_t0)]++; lat_in = false; }
+            if (!sr) lat_in = false;
+        }
         if (want_audio && dut->snd_valid) { audio.push_back((short)dut->snd_l); audio.push_back((short)dut->snd_r); }
         if (dut->dbg_zstep) zsteps++;
         if (dut->dbg_dma) dma_clk++;
@@ -297,6 +305,13 @@ int main(int argc, char **argv) {
                        chk_n[0], chk_bad[0], chk_n[1], chk_bad[1], chk_n[2], chk_bad[2]);
     printf("%d frames, %llu clocks, %llu 68000 steps (%.0f a frame); IRQ5 in %u frames; unsupported=%d shadow_overlap=%d ddr_overflow=%d\n",
            frames, cycles, steps, (double)steps / frames, irq, (int)dut->dbg_unsupported, (int)dut->dbg_shadow_overlap, (int)dut->ddr_overflow);
+    if (!lat_hist.empty()) {
+        unsigned long long tot = 0, sum = 0;
+        for (auto &kv : lat_hist) { tot += kv.second; sum += (unsigned long long)kv.first * kv.second; }
+        auto pct = [&](double q) { unsigned long long acc = 0; for (auto &kv : lat_hist) { acc += kv.second; if (acc >= q * tot) return kv.first; } return 0u; };
+        printf("sprite ROM port latency (clocks, request to ack): %llu requests, mean %.1f, p50 %u, p90 %u, p99 %u, max %u\n",
+               tot, (double)sum / tot, pct(0.5), pct(0.9), pct(0.99), lat_hist.rbegin()->first);
+    }
     if (want_audio) {
         std::string wp = prefix + ".wav";
         FILE *wf = fopen(wp.c_str(), "wb");

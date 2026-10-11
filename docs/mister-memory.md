@@ -57,7 +57,9 @@ and the same index is used to save and restore it (`<nvram>`).
 ## Video
 
 The 6 MHz pixel clock comes from the 96 MHz system clock (a pixel every 16 clocks; a 384-pixel line is 6,144 clocks, the budget the
-renderers were designed against). The mixer's 16-clock schedule is described in `rtl/mm_mixer.sv`. Flip Screen (`flip_buf.sv`)
+renderers were designed against; the sprite drawer works up to seven lines ahead through a ring of line buffers
+(`spr_sched.sv`) and reads its rows through a 512-row cache (`spr_rowcache.sv`), because the dragon fights put up to ~190 tile rows on a line, each
+one an SDRAM burst). The mixer's 16-clock schedule is described in `rtl/mm_mixer.sv`. Flip Screen (`flip_buf.sv`)
 turns the finished picture 180 degrees through two DDR3 frame buffers, as in the Gaiapolis core, with `W = 288`. CRT Adjust is
 rmonic79's module, as there; with this raster the picture is 288 pixels in a line of 384, starting 72 pixels after the hsync
 pulse starts and ending 24 before the next, so H-Size goes to +4 (read period 64 + n quarter-clocks) and H-Position to +20.

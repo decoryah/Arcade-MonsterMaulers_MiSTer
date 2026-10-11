@@ -51,6 +51,7 @@ module mm_video #(
     output logic        prestart,       // one pulse a few raster lines before the visible area (the ROZ plane pre-renders)
     input  logic  [2:0] renderers_busy, // {tilemap, ROZ, sprites}
     output logic        overrun,
+    output logic        overrun_line,   // one clock per line that began with a renderer still busy (`overrun` is a level that holds)
     output logic  [2:0] overrun_src,    // which of them, with the pulse
 
     // scan-out
@@ -79,6 +80,7 @@ module mm_video #(
 
     always_ff @(posedge clk) begin
         line_start  <= 1'b0;
+        overrun_line <= 1'b0;
         prestart    <= 1'b0;
         vblank_rise <= 1'b0;
         if (reset) begin
@@ -101,7 +103,8 @@ module mm_video #(
                 if (nxt >= 9'(VIS_Y0) && nxt <= 9'(VIS_Y0 + VIS_H)) begin
                     line_start  <= 1'b1;
                     render_line <= nxt;
-                    overrun <= |renderers_busy;     // one pulse per overrunning line
+                    overrun <= |renderers_busy;     // a level: it stays up over consecutive overrunning lines
+                    overrun_line <= |renderers_busy;
                     overrun_src <= renderers_busy;
                 end
                 if (vcount == 9'(VIS_Y0 - 6)) prestart <= 1'b1;

@@ -155,27 +155,99 @@ int main(int argc, char **argv) {
     dut->build = 1; tick(); dut->build = 0;
     long c = 0;
     while (!dut->build_done) { tick(); if (++c > 2000000) { fprintf(stderr, "objlist hung\n"); return 1; } }
+    printf("object list built in %ld clocks%c", c, 10);
 
     std::vector<unsigned> out(VIS_H * VIS_W, 0);
     long worst = 0, worst_tm = 0, worst_roz = 0, worst_dr = 0;
     int min_lead = 99;
+    long hist[64] = {0}, worst_hist[64] = {0}; int worst_hist_line = -1;
     auto render_line = [&](int raster_y) -> long {
         dut->line_start = 1; dut->line = raster_y; tick(); dut->line_start = 0;
         long n = 0;
         long n_tm = 0, n_roz = 0, n_dr = 0;
+        memset(hist, 0, sizeof hist);
         while (dut->busy) {
             tick(); if (++n > 2000000) { fprintf(stderr, "line %d hung\n", raster_y); exit(1); }
-            if (dut->busy_src & 4) n_tm = n; if (dut->busy_src & 2) n_roz = n; if (dut->busy_src & 1) n_dr = n;
+            if (dut->busy_src & 4) n_tm = n; if (dut->busy_src & 2) n_roz = n; if (dut->busy_src & 1) { n_dr = n; hist[dut->dbg_dr_st & 63]++; }
         }
-        if (n_tm > worst_tm) worst_tm = n_tm; if (n_roz > worst_roz) worst_roz = n_roz; if (n_dr > worst_dr) worst_dr = n_dr;
+        if (n_tm > worst_tm) worst_tm = n_tm; if (n_roz > worst_roz) worst_roz = n_roz;
+        if (n_dr > worst_dr) { worst_dr = n_dr; memcpy(worst_hist, hist, sizeof hist); worst_hist_line = raster_y; }
         return n;
     };
-    // the frame's pre-start, as mm_video gives it a few raster lines early
-    dut->prestart = 1; tick(); dut->prestart = 0;
-    for (int k = 0; k < 5 * HTOTAL * PIXCLK; k++) tick();     // five raster lines before the first pulse
-    render_line(VIS_Y0);
+    // the frame's pre-start, as mm_video gives it a few raster lines early; the sprite drawer starts on the new list
+    // and runs through the vblank as far as its ring allows (SPR_LEAD lines before the picture)
+    const int SPR_LEAD = 3;
+    dut->hcount_i = 0;
+    auto prologue = [&]() {
+        dut->vcount = VIS_Y0 - 1;
+        dut->prestart = 1; tick(); dut->prestart = 0;
+        for (int k = 0; k < 5 * HTOTAL * PIXCLK; k++) tick();     // five raster lines before the first pulse
+        long w = 0;
+        while (dut->spr_done_line < VIS_Y0 + SPR_LEAD - 1 && w < 4000000) { tick(); w++; }
+        render_line(VIS_Y0);
+    };
+    prologue();
     dut->px_valid = 1;
-    for (int y = 0; y < VIS_H; y++) {
+    // REALTIME=1: the renderers get what the raster gives them -- one line period, 6144 clocks, from each pulse, while the
+    // line before is scanned out -- and are restarted by the next pulse if still busy, as in mm_video; the memories'
+    // latencies (+LAT_*) then decide which lines come out short. Default: each line is rendered to completion.
+    const bool realtime = getenv("REALTIME") != nullptr;
+    // TEAR=<state.txt>: the game rewrites sprite RAM while the frame is drawn (it does, between about visible rows 47 and
+    // 135); the words that differ in that second state are written from TEAR_FROM to TEAR_TO (rows, default 47..135),
+    // after the object list was built from this state, and the drawer reads whatever the RAM holds when it gets there
+    std::vector<std::pair<int, unsigned>> tear;
+    if (getenv("TEAR")) {
+        State b = load_state(getenv("TEAR"));
+        auto &sa = st.f["SPRITERAM"]; auto &sb = b.f["SPRITERAM"];
+        for (size_t k = 0; k < 2048 && k < sb.size() && k < sa.size(); k++) if (sa[k] != sb[k]) tear.push_back({(int)k, sb[k]});
+        printf("TEAR: %zu sprite RAM words change during the frame%c", tear.size(), 10);
+    }
+    size_t tear_i = 0;
+    const int tear_y0 = getenv("TEAR_FROM") ? atoi(getenv("TEAR_FROM")) : 47, tear_y1 = getenv("TEAR_TO") ? atoi(getenv("TEAR_TO")) : 135;
+    int overrun_lines = 0;
+    const int passes = getenv("PASSES") ? atoi(getenv("PASSES")) : 1;
+    std::vector<int> overrun_rows;
+    for (int pass = 0; pass < passes && realtime; pass++) {
+    overrun_lines = 0; overrun_rows.clear();
+    if (pass > 0) {
+        printf("after pass %d: cache %u hits, %u misses, %d lines late\n", pass, (unsigned)dut->cache_hits, (unsigned)dut->cache_misses, overrun_lines);
+        tear_i = 0;
+        // the next frame, as in the prologue: its list is built again, the drawer starts over
+        dut->build = 1; tick(); dut->build = 0;
+        { long c2 = 0; while (!dut->build_done) { tick(); if (++c2 > 2000000) { fprintf(stderr, "objlist hung\n"); return 1; } } }
+        prologue();
+    }
+    for (int y = 0; y < VIS_H && realtime; y++) {
+        dut->vcount = VIS_Y0 + y; dut->hcount_i = 24;
+        dut->line_start = 1; dut->line = VIS_Y0 + y + 1; tick(); dut->line_start = 0;
+        long n = 1;
+        if (!tear.empty() && y >= tear_y0 && y <= tear_y1 && tear_i < tear.size()) {
+            size_t cnt = (tear.size() - tear_i) / (size_t)(tear_y1 - y + 1);
+            if (y == tear_y1) cnt = tear.size() - tear_i;
+            for (size_t k = 0; k < cnt; k++, tear_i++) { dut->sram_we = 1; dut->sram_waddr = tear[tear_i].first; dut->sram_wdata = tear[tear_i].second; tick(); n++; }
+            dut->sram_we = 0;
+        }
+        for (int x = 0; x < VIS_W; x++) {
+            dut->px = x; dut->cen_pix = 1; tick(); dut->cen_pix = 0; n++;
+            for (int k = 0; k < PIXCLK - 1; k++) { tick(); n++; }
+            out[y * VIS_W + x] = dut->rgb;
+        }
+        for (; n < (long)HTOTAL * PIXCLK; n++) tick();
+        // what mm_video samples as the next line begins
+        dut->vcount = VIS_Y0 + y + 1; dut->eval();
+        if (dut->busy) { overrun_lines++; overrun_rows.push_back(y); }
+        if (dut->roz_lead < min_lead && y < VIS_H - 8) min_lead = dut->roz_lead;
+    }
+    }
+    if (realtime) {
+        printf("REALTIME: %d of %d lines were still being rendered when the next pulse came", overrun_lines, VIS_H);
+        if (!overrun_rows.empty()) { printf(" (rows"); for (int r : overrun_rows) printf(" %d", r); printf(")"); }
+        printf("\n");
+    }
+    printf("sprite row cache: %u hits, %u misses\n", (unsigned)dut->cache_hits, (unsigned)dut->cache_misses);
+    dut->hcount_i = 0;
+    for (int y = 0; y < VIS_H && !realtime; y++) {
+        dut->vcount = VIS_Y0 + y;
         long n = render_line(VIS_Y0 + y + 1);
         if (n > worst) worst = n;
         // after the wait: lines in hand beyond the one due (1 = just in time); the
@@ -196,6 +268,11 @@ int main(int argc, char **argv) {
     FILE *of = fopen(argv[5], "wb");
     if (!of) { fprintf(stderr, "cannot write %s\n", argv[5]); return 1; }
     fwrite(out.data(), 4, out.size(), of); fclose(of);
+    if (getenv("HIST")) {
+        printf("sprite drawer, worst line (raster %d), clocks per state:", worst_hist_line);
+        for (int s = 0; s < 64; s++) if (worst_hist[s]) printf(" %d:%ld", s, worst_hist[s]);
+        printf("%c", 10);
+    }
     printf("worst line %ld clocks (budget 6144; tilemap %ld, ROZ %ld late, sprites %ld); ROZ lead min %d\n", worst, worst_tm, worst_roz, worst_dr, min_lead);
     delete dut;
     return 0;

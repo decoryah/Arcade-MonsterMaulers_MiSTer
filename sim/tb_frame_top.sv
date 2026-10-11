@@ -3,7 +3,9 @@
 // through the mixer to RGB. Structure after the Gaiapolis (Pocket) frame bench.
 `default_nettype none
 
-module tb_frame_top (
+module tb_frame_top #(
+    parameter int SPR_SB = 2        // sprite line buffer ring: 2**SPR_SB lines
+) (
     input  logic        clk,
     input  logic        cen_pix,        // the pixel tick the mixer's phases count from
     input  logic        reset,
@@ -34,7 +36,10 @@ module tb_frame_top (
     output logic        build_done,
     input  logic        prestart,
     input  logic        line_start,
-    input  logic  [8:0] line,
+    input  logic  [8:0] line,           // the tilemap's and the ROZ's line (the sprites schedule their own)
+    input  logic  [8:0] vcount,         // the raster line being scanned: the sprite drawer's lead is counted from it
+    input  logic  [8:0] hcount_i,       // 0: render lines to completion; 24: a line is dropped as its picture starts
+    output logic  [8:0] spr_done_line,
     output logic        busy,
     output logic  [2:0] busy_src,       // {tilemap, ROZ, sprites}
     output logic  [3:0] roz_lead,       // the ROZ plane's lines in hand, after a pulse
@@ -42,7 +47,9 @@ module tb_frame_top (
     input  logic        px_valid,
     output logic [23:0] rgb,
     output logic        unsupported,
-    output logic        shadow_overlap
+    output logic        shadow_overlap,
+    output logic  [5:0] dbg_dr_st,      // the sprite drawer's state, for the line-time histogram
+    output logic [31:0] cache_hits, cache_misses
 );
     // ------------------------------------------------------------ registers
     logic [15:0] k56regs [32];
@@ -182,8 +189,9 @@ module tb_frame_top (
     logic [31:0] dbg0, dbg1, dbg2, dbg3;
     logic  [3:1] mix_zero, mix_full;
 
-    assign busy = tm_busy | roz_busy | dr_busy;
-    assign busy_src = {tm_busy, roz_busy, dr_busy};
+    logic spr_late;
+    assign busy = tm_busy | roz_busy | spr_late;
+    assign busy_src = {tm_busy, roz_busy, spr_late};
     assign unsupported = tm_unsup | roz_unsup | overflow;
 
     k056832_tilemap u_tm (
@@ -211,12 +219,44 @@ module tb_frame_top (
         .ram_addr(ol_sram_addr), .ram_q(sram_q),
         .list_idx(list_idx), .list_q(list_q), .count(list_count), .overflow(overflow)
     );
-    k053247_draw u_dr (
-        .clk(clk), .reset(reset), .line_start(line_start), .line(line), .busy(dr_busy),
+    assign dbg_dr_st = u_dr.st;
+    // the sprite row cache between the drawer and the ROM port (+NOCACHE=1 bypasses it)
+    logic        dr_rom_req, dr_rom_ack, cc_req, cc_ack; logic [19:0] dr_rom_addr, cc_addr; logic [79:0] dr_rom_q, cc_q;
+    int          nocache;
+    initial if (!$value$plusargs("NOCACHE=%d", nocache)) nocache = 0;
+    logic [31:0] hits, misses;
+    spr_rowcache u_rc (
+        .clk(clk), .reset(reset),
+        .c_req(dr_rom_req), .c_addr(dr_rom_addr), .c_ack(cc_ack), .c_q(cc_q),
+        .m_req(cc_req), .m_addr(cc_addr), .m_ack(srom_ack), .m_q(srom_q),
+        .dbg_hits(hits), .dbg_misses(misses)
+    );
+    assign srom_req    = nocache ? dr_rom_req  : cc_req;
+    assign srom_addr   = nocache ? dr_rom_addr : cc_addr;
+    assign dr_rom_ack  = nocache ? srom_ack    : cc_ack;
+    assign dr_rom_q    = nocache ? srom_q      : cc_q;
+    assign cache_hits  = hits;
+    // +ADDRLOG=<file>: every sprite row the drawer is given, with the line it was fetched for
+    integer alog; string alog_name;
+    initial begin
+        alog = 0;
+        if ($value$plusargs("ADDRLOG=%s", alog_name)) alog = $fopen(alog_name, "w");
+    end
+    always_ff @(posedge clk) if (alog != 0 && dr_rom_ack && dr_rom_req) $fwrite(alog, "%0d %0h\n", u_sched.line, dr_rom_addr);
+    assign cache_misses = misses;
+    logic        dr_ls, dr_abort, spr_rd_ok, dr_clearing;
+    logic  [8:0] dr_line;
+    spr_sched #(.SB(SPR_SB)) u_sched (
+        .clk(clk), .reset(reset), .vcount(vcount), .hcount(hcount_i), .dr_clearing(dr_clearing), .list_rebuild(build), .list_done(build_done), .dr_busy(dr_busy),
+        .line_start(dr_ls), .line(dr_line), .abort(dr_abort), .late(spr_late), .rd_ok(spr_rd_ok), .done_line(spr_done_line)
+    );
+    k053247_draw #(.SB(SPR_SB)) u_dr (
+        .clk(clk), .reset(reset), .line_start(dr_ls), .line(dr_line), .abort(dr_abort), .busy(dr_busy), .clearing(dr_clearing),
+        .rd_slot(vcount[SPR_SB-1:0]), .rd_ok(spr_rd_ok),
         .k46r5(objset1), .k46_offx(k46offx), .k46_offy(k46offy), .opset(opset), .colorbase(spr_colorbase),
         .list_idx(list_idx), .list_q(list_q), .list_count(list_count), .yr_addr(yr_addr), .yr_q(yr_q),
         .ram_addr(dr_sram_addr), .ram_q(sram_q),
-        .rom_req(srom_req), .rom_addr(srom_addr), .rom_ack(srom_ack), .rom_q(srom_q),
+        .rom_req(dr_rom_req), .rom_addr(dr_rom_addr), .rom_ack(dr_rom_ack), .rom_q(dr_rom_q),
         .zoom_addr(dr_zoom_addr), .zoom_q(zoom_q), .recip_addr(recip_addr), .recip_q(recip_q),
         .px(px), .out_opaque(spr_opq), .out_pen(spr_pen), .out_pri(spr_pri), .out_mix(spr_mix),
         .out_shadow(spr_shadow), .out_shtab(spr_shtab), .out_shpri(spr_shpri),

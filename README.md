@@ -29,7 +29,11 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   compared with MAME's own snapshot of that frame. 39 of the 40 frames in the corpus (attract mode, the ROZ stages,
   fades, alpha blends, shadows) are **pixel-identical**; the other has 10 pixels (of 64,512) where MAME darkens one
   pixel with two overlapping shadow sprites and the core applies the shadow once (see "Known differences"). The slowest
-  line of any frame takes 3,432 of the 6,144 clocks a line allows.
+  line of those takes 3,432 of the 6,144 clocks a line allows with ideal memory. The dragon fights are heavier (a line of
+  up to ~190 tile rows: the dragon's neck and its shadow are chains of 17 objects each, with the fighters and the life
+  bar over them), and at the SDRAM's latency they are what the sprite line ring and row cache of 20261011 were added for;
+  127 frozen frames of those fights were rendered the same way and compared with the ideal-memory render (see
+  "Release history").
 * **ROM path.** `tools/make_mra.py`, `tools/mra_build.py` and `tools/mm_rom.py` rebuild MAME's memory regions from the zip
   and `tools/check_regions.py` compares them with what MAME actually loaded (43 slices, all identical).
 * **Whole machine.** `sim/tb_mm*`: the real 68000 and Z80 programs from reset, through the loader and the SDRAM /
@@ -61,9 +65,9 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   DDR3 model with random `BUSY`, with the option switched on and off at random points inside frames; every visible pixel
   of every frame is checked (turned 180 degrees from the frame before, or unchanged). 0 errors, 40 frames.
 * **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7: 48 % of the ALMs
-  (19,980 of 41,910), 97 % of the block RAM (536 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
-  at 96 MHz with every check positive (setup +0.44 ns, hold +0.25, recovery +1.67, removal +1.05 in the slow 100 C
-  model; `releases/monstermaulers_20261010.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
+  (20,013 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
+  at 96 MHz with every check positive (setup +0.32 ns, hold +0.25, recovery +1.88, removal +0.70 in the slow 100 C
+  model; `releases/monstermaulers_20261011.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
   brightness -> divide-by-255 step, which is two stages now, and the diagnostic overlay's status word is registered; the
   frame corpus is unchanged by either.
 * **K054539 against MAME, chip level** (`sim/run_k539.sh`): the Z80's register writes to both chips are logged from MAME
@@ -73,25 +77,48 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
 
 ## Release history
 
-**20261010** -- the first release. Two faults the first board test (an earlier build, not published) showed were fixed
-before it:
+**20261011** -- the Red Dragon fight's fighters kept their feet. In that fight the fighters' shins and boots were missing
+in a band of about ten rows just above the boss's life bar (the toes reappeared from the life bar's row down), at any
+position on the screen. The sprite drawer has 6,144 clocks for a line, and the dragon's neck and its shadow put up to ~190
+tile rows on the lines above the life bar, each costing the SDRAM's latency; the objects drawn last (the fighters and the
+HUD) were what ran out of time. Fixed in three parts, all checked against MAME's frames in simulation and then on the board:
+
+* *A ring of line buffers.* `rtl/spr_sched.sv` starts each sprite line as soon as the drawer is free and its buffer is
+  scanned out, up to seven lines ahead of the picture (`k053247_draw`'s `SB` = 3: eight line buffers), so a run of heavy
+  lines borrows the time the light lines before it left. A line still unfinished when its picture starts is dropped as it
+  stands, as the old per-line pulse did. The Z buffer (all z codes are 0 in this game) and the shadow buffer's duplicate
+  read port are gone to pay for the extra buffers.
+* *A sprite row cache.* `rtl/spr_rowcache.sv`: 512 rows of 80 bits in front of the sprite ROM port; the dragon's chains
+  reuse a few hundred rows every line.
+* *The overlay's overrun count counted runs, not lines.* The squares showed "1" for an eleven-line band, which hid this
+  fault in earlier photos; they count late lines now (`mm_video`'s `overrun_line`).
+
+In simulation (the same frozen-frame bench, with the SDRAM latency modelled and the drawer given its real 6,144-clock
+line): at 48 clocks of sprite ROM latency 99 of 127 frames of the two dragon fights had late lines with the old drawer
+(4 to 41 of them); with the row cache and a ring of four line buffers 125 of them had none and the other two 3 and 5 (the
+pictures equal the ideal-memory render in 126), and the ring of eight that is built in clears the heaviest frames (the
+dragon's fire) even at 72 clocks. The fit is 549 of 553 M10K.
+
+**20261010** -- the first build tested on a board. Two faults the first board test (an earlier build, not published)
+showed were fixed before it:
 
 * *Ghost copies and mixed glyph rows in the picture.* Quartus builds the tile layers' and the sprite drawer's two-bank line
   buffers 512 words deep where 576 were declared, so bank 1's pixels 224..287 aliased bank 0's 0..63 -- which no simulator
   shows. They are flat power-of-two arrays now, and `tools/check_ram_depth.py` checks every fit report for the same fault
-  (`releases/monstermaulers_20261010.ram_depths.txt`: 26 RAMs, 0 problems).
+  (26 RAMs, 0 problems).
 * *Weak, crackling music.* Three differences from MAME's `k054539.cpp` in `rtl/k054539.sv`: 16-bit PCM stepped one byte a
   sample and was forced to word alignment (MAME steps two bytes from whatever address), the UPDATE_AT_KEYON latch (position
   writes are held until key-on, MAME's default) was missing, and the reverb ring index lacked MAME's second add of the
   position. The sum of the two chips also saturates now, as MAME's does, instead of wrapping.
 
-The RBF is the one that was played on the board; its fitter and timing summaries are `releases/monstermaulers_20261010.fit.summary`
-and `.sta.summary`.
+The 20261011 RBF is the one that was played on the board; its fitter and timing summaries are
+`releases/monstermaulers_20261011.fit.summary`, `.sta.summary` and `.ram_depths.txt` (the 20261010 build's are in the first
+commit of the repository's history).
 
 ## Install
 
-1. Unzip the release's `MonsterMaulers_MiSTer_20261010.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/monstermaulers_20261010.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
+1. Unzip the release's `MonsterMaulers_MiSTer_20261011.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/monstermaulers_20261011.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `monstermaulers_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `monstermaulers_*.rbf` files.
 2. Put your MAME 0.289 `mmaulers.zip` in `/media/fat/games/mame/` (the parent set; the USA and Japan versions'
@@ -116,8 +143,10 @@ and `.sta.summary`.
 skipped and its squares stay dark. Row 0: frame counter, PLL locked, memory ready, download, test hold, core reset, IRQ5,
 68000 stepped, core resets seen, test done / running, tile RAM ok, Z80 stepped. Row 1: the 68000's address, then the seven
 regions read back equal to what was loaded (prog, snd, tile, chr, map, pcm, spr) and sound heard. Row 2: the same regions
-read stably twice, DDR3 FIFO overflow, lines overrun last frame, sprites in the list / 4, then flags. Row 1's first 24
-squares are the live 68000 bus address and flicker.
+read stably twice, DDR3 FIFO overflow, the number of lines last frame that a renderer had not finished when the line's
+picture began (binary, left square highest; the sprite drawer, the tilemap and the rotating plane are told apart by
+the flags' last three squares), sprites in the list / 4, then flags. Row 1's first 24 squares are the live 68000 bus
+address and flicker. In normal play the line count is 0.
 
 The game is horizontal (ROT0), so there is no rotation option. On a gamepad the default mapping is A / B / R for
 buttons 1 / 2 / 3, Start for Start and Select for Coin (remap it in MiSTer's usual way). Two players; the board has no

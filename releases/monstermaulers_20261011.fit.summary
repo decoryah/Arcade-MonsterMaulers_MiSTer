@@ -1,16 +1,16 @@
-Fitter Status : Successful - Sat Oct 10 16:57:19 2026
+Fitter Status : Successful - Sun Oct 11 03:36:47 2026
 Quartus Prime Version : 17.0.2 Build 602 07/19/2017 SJ Lite Edition
 Revision Name : MonsterMaulers
 Top-level Entity Name : sys_top
 Family : Cyclone V
 Device : 5CSEBA6U23I7
 Timing Models : Final
-Logic utilization (in ALMs) : 19,980 / 41,910 ( 48 % )
-Total registers : 28074
+Logic utilization (in ALMs) : 20,013 / 41,910 ( 48 % )
+Total registers : 28296
 Total pins : 145 / 314 ( 46 % )
 Total virtual pins : 0
-Total block memory bits : 4,072,553 / 5,662,720 ( 72 % )
-Total RAM Blocks : 536 / 553 ( 97 % )
+Total block memory bits : 4,197,769 / 5,662,720 ( 74 % )
+Total RAM Blocks : 549 / 553 ( 99 % )
 Total DSP Blocks : 69 / 112 ( 62 % )
 Total HSSI RX PCSs : 0
 Total HSSI PMA RX Deserializers : 0

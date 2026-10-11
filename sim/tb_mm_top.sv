@@ -49,6 +49,8 @@ module tb_mm_top #(
     logic [15:0] prog_q, map_q; logic [39:0] tile_q; logic [79:0] spr_q;
     // read by the C++ bench's ROM check (ROMCHK=1)
     logic        chk_tile_ack /*verilator public_flat_rd*/, chk_spr_ack /*verilator public_flat_rd*/, chk_map_ack /*verilator public_flat_rd*/;
+    logic        chk_spr_req /*verilator public_flat_rd*/;
+    assign chk_spr_req = spr_req;
     logic [18:0] chk_tile_addr /*verilator public_flat_rd*/;
     logic [39:0] chk_tile_q /*verilator public_flat_rd*/;
     logic [19:0] chk_spr_addr /*verilator public_flat_rd*/;
@@ -133,7 +135,7 @@ module tb_mm_top #(
         .cen_pix(cen_pix), .rgb(rgb), .hsync(hsync), .vsync(vsync), .de(de), .vblank(vblank),
         .snd_l(snd_l), .snd_r(snd_r), .snd_valid(snd_valid),
         .dbg_addr(dbg_addr), .dbg_data(dbg_data), .dbg_busstate(dbg_busstate), .dbg_step(dbg_step), .dbg_irq5(dbg_irq5),
-        .dbg_overrun(dbg_overrun), .dbg_overrun_src(dbg_overrun_src), .dbg_draw_objs(), .dbg_draw_rows(), .dbg_draw_cols(), .dbg_draw_pxw(),
+        .dbg_overrun(dbg_overrun), .dbg_overrun_line(), .dbg_overrun_src(dbg_overrun_src), .dbg_draw_objs(), .dbg_draw_rows(), .dbg_draw_cols(), .dbg_draw_pxw(),
         .dbg_spr_we(dbg_spr_we), .dbg_roz_en(), .dbg_rozctrl(), .dbg_rozclip(), .dbg_k55(),
         .dbg_unsupported(dbg_unsupported), .dbg_shadow_overlap(dbg_shadow_overlap),
         .dbg_objcount(dbg_objcount), .dbg_vcount(dbg_vcount), .dbg_zpc(dbg_zpc), .dbg_zstep(dbg_zstep), .dbg_zwait(dbg_zwait),

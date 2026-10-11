@@ -300,6 +300,7 @@ wire [15:0] mm_snd_l, mm_snd_r;
 wire        mm_snd_valid;
 wire [23:0] dbg_addr; wire [15:0] dbg_data; wire [1:0] dbg_busstate; wire [9:0] dbg_objcount; wire [8:0] dbg_vcount;
 wire [15:0] dbg_zpc;
+wire        dbg_overrun_line;
 wire        dbg_step, dbg_irq5, dbg_overrun, dbg_unsupported, dbg_shadow_overlap, dbg_zstep, dbg_zwait, dbg_dma;
 wire  [2:0] dbg_overrun_src;
 
@@ -320,7 +321,7 @@ mm_core #(.HEXDIR("rtl/data")) mm
 	.cen_pix(mm_cen_pix), .rgb(mm_rgb), .hsync(mm_hs), .vsync(mm_vs), .de(mm_de), .vblank(mm_vb),
 	.snd_l(mm_snd_l), .snd_r(mm_snd_r), .snd_valid(mm_snd_valid),
 	.dbg_addr(dbg_addr), .dbg_data(dbg_data), .dbg_busstate(dbg_busstate), .dbg_step(dbg_step), .dbg_irq5(dbg_irq5),
-	.dbg_overrun(dbg_overrun), .dbg_overrun_src(dbg_overrun_src), .dbg_draw_objs(), .dbg_draw_rows(), .dbg_draw_cols(), .dbg_draw_pxw(),
+	.dbg_overrun(dbg_overrun), .dbg_overrun_line(dbg_overrun_line), .dbg_overrun_src(dbg_overrun_src), .dbg_draw_objs(), .dbg_draw_rows(), .dbg_draw_cols(), .dbg_draw_pxw(),
 	.dbg_spr_we(), .dbg_roz_en(), .dbg_rozctrl(), .dbg_rozclip(), .dbg_k55(),
 	.dbg_unsupported(dbg_unsupported), .dbg_shadow_overlap(dbg_shadow_overlap),
 	.dbg_objcount(dbg_objcount), .dbg_vcount(dbg_vcount), .dbg_zpc(dbg_zpc), .dbg_zstep(dbg_zstep), .dbg_zwait(dbg_zwait),
@@ -366,8 +367,8 @@ always @(posedge clk_sys) begin
 		ovl_dma_l <= ovl_dma; ovl_dma <= 1'b0;
 	end
 	ovl_ovr_d <= dbg_overrun;
-	if (dbg_overrun && !ovl_ovr_d && ovl_overruns != 8'hff) ovl_overruns <= ovl_overruns + 8'd1;
-	if (dbg_overrun && !ovl_ovr_d) ovl_ovsrc <= ovl_ovsrc | dbg_overrun_src;
+	if (dbg_overrun_line && ovl_overruns != 8'hff) ovl_overruns <= ovl_overruns + 8'd1;     // lines, not runs of lines
+	if (dbg_overrun_line) ovl_ovsrc <= ovl_ovsrc | dbg_overrun_src;
 	if (dbg_unsupported)    ovl_unsup  <= 1'b1;
 	if (dbg_shadow_overlap) ovl_shadow <= 1'b1;
 	if (fb_underrun)        ovl_funder <= 1'b1;

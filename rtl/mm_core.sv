@@ -106,6 +106,7 @@ module mm_core #(
     output logic        dbg_step,
     output logic        dbg_irq5,
     output logic        dbg_overrun,
+    output logic        dbg_overrun_line,   // one clock per overrunning line
     output logic  [2:0] dbg_overrun_src,    // {tilemap, ROZ, sprites} still busy at that line start
     output logic [31:0] dbg_draw_objs, dbg_draw_rows, dbg_draw_cols, dbg_draw_pxw,   // the sprite renderer's running work counts
     output logic        dbg_spr_we,             // a CPU write into the sprite RAM
@@ -136,7 +137,7 @@ module mm_core #(
     mm_video u_vid (
         .clk(clk), .reset(vid_reset), .cen_pix(cen_pix),
         .line_start(line_start), .render_line(render_line), .prestart(prestart),
-        .renderers_busy(renderers_busy), .overrun(dbg_overrun), .overrun_src(dbg_overrun_src),
+        .renderers_busy(renderers_busy), .overrun(dbg_overrun), .overrun_line(dbg_overrun_line), .overrun_src(dbg_overrun_src),
         .px(px), .px_valid(px_valid), .hcount(hcount), .vcount(vcount),
         .hsync(hsync), .vsync(vsync), .de(de), .vblank(vblank), .vblank_rise(vblank_rise)
     );
@@ -255,7 +256,8 @@ module mm_core #(
     logic [19:0] rspr_addr;
     logic  [3:1] mix_zero, mix_full;
 
-    assign renderers_busy  = {tm_busy, roz_busy, dr_busy};
+    logic spr_late;     // the sprite line about to be shown is not finished (spr_sched)
+    assign renderers_busy  = {tm_busy, roz_busy, spr_late};
     assign dbg_roz_en = roz_enable;
     always_comb begin
         for (int i = 0; i < 8; i++)  dbg_rozctrl[i*16 +: 16] = rozctrl[i];
@@ -389,17 +391,35 @@ module mm_core #(
     sprite_tables #(.HEXDIR(HEXDIR)) u_tab (
         .clk(clk), .zoom_addr(zoom_addr), .zoom_q(zoom_q), .recip_addr(recip_addr), .recip_q(recip_q)
     );
-    k053247_draw u_dr (
-        .clk(clk), .reset(reset), .line_start(line_start), .line(render_line), .busy(dr_busy),
+    // the drawer runs ahead of the scan-out through a ring of line buffers (spr_sched), and its ROM rows come
+    // through a row cache (spr_rowcache) in front of the arbiter
+    localparam int SPR_SB = 3;
+    logic        dr_ls, dr_abort, spr_rd_ok, dr_clearing;
+    logic  [8:0] dr_line, dr_done_line;
+    logic        drw_req, drw_ack; logic [19:0] drw_addr; logic [79:0] drw_q;
+    logic [31:0] rc_hits, rc_misses;
+    spr_sched #(.SB(SPR_SB)) u_sched (
+        .clk(clk), .reset(reset), .vcount(vcount), .hcount(hcount), .dr_clearing(dr_clearing), .list_rebuild(copy_start), .list_done(ol_done), .dr_busy(dr_busy),
+        .line_start(dr_ls), .line(dr_line), .abort(dr_abort), .late(spr_late), .rd_ok(spr_rd_ok), .done_line(dr_done_line)
+    );
+    k053247_draw #(.SB(SPR_SB)) u_dr (
+        .clk(clk), .reset(reset), .line_start(dr_ls), .line(dr_line), .abort(dr_abort), .busy(dr_busy), .clearing(dr_clearing),
+        .rd_slot(vcount[SPR_SB-1:0]), .rd_ok(spr_rd_ok),
         .k46r5(objset1), .k46_offx(k46offx), .k46_offy(k46offy), .opset(opset), .colorbase(spr_colorbase),
         .list_idx(list_idx), .list_q(list_q), .list_count(list_count), .yr_addr(yr_addr), .yr_q(yr_q),
         .ram_addr(dr_sram_addr), .ram_q(scopy_q),
-        .rom_req(rspr_req), .rom_addr(rspr_addr), .rom_ack(rspr_ack), .rom_q(spr_q),
+        .rom_req(drw_req), .rom_addr(drw_addr), .rom_ack(drw_ack), .rom_q(drw_q),
         .zoom_addr(dr_zoom_addr), .zoom_q(zoom_q), .recip_addr(recip_addr), .recip_q(recip_q),
         .px(px), .out_opaque(spr_opq), .out_pen(spr_pen), .out_pri(spr_pri), .out_mix(spr_mix),
         .out_shadow(spr_shadow), .out_shtab(spr_shtab), .out_shpri(spr_shpri),
         .shadow_overlap(dbg_shadow_overlap),
         .dbg_objs(dbg_draw_objs), .dbg_rows(dbg_draw_rows), .dbg_cols(dbg_draw_cols), .dbg_pxw(dbg_draw_pxw)
+    );
+    spr_rowcache u_rowcache (
+        .clk(clk), .reset(reset),
+        .c_req(drw_req), .c_addr(drw_addr), .c_ack(drw_ack), .c_q(drw_q),
+        .m_req(rspr_req), .m_addr(rspr_addr), .m_ack(rspr_ack), .m_q(spr_q),
+        .dbg_hits(rc_hits), .dbg_misses(rc_misses)
     );
     rom_arb2 #(.AW(20), .DW(80)) u_spr_arb (
         .clk(clk), .reset(reset),
@@ -448,6 +468,6 @@ module mm_core #(
 
     /* verilator lint_off UNUSEDSIGNAL */
     wire unused = ^{k56regsb[0], k56regsb[1], k56regsb[2], k56regsb[3], roz_rombank,
-                    ol_done, px_valid, vblank_rise, cchr_addr[0], hcount};
+                    px_valid, vblank_rise, cchr_addr[0], dr_done_line, rc_hits, rc_misses};
     /* verilator lint_on UNUSEDSIGNAL */
 endmodule

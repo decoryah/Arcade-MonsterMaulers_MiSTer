@@ -19,6 +19,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/mm_mixer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/k056832_tilemap.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_arb2.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/rom_arb2.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/spr_rowcache.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/spr_sched.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sprite_tables.sv
 
 # TG68K.C 68000 kernel (LGPL, Tobias Gubener), GHDL-converted

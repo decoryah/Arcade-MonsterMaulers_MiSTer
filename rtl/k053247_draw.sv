@@ -9,8 +9,9 @@
 // is {colour[5:0], pen[4:0]}; the shadow pen is 31 (15 in the 4bpp game).
 //
 // Walks the ordered object list from k053247_objlist once per display line and
-// rasterizes whatever covers it into a line buffer with a per-pixel Z buffer,
-// as zdrawgfxzoom32GP does. Semantics follow tools/render_model.py; the design
+// rasterizes whatever covers it into a line buffer (one of a ring of 2**SB; spr_sched
+// decides which line is drawn when), later objects over earlier ones, with a shadow
+// buffer, as zdrawgfxzoom32GP does (its Z buffer is not needed: this game's z codes are 0). Semantics follow tools/render_model.py; the design
 // notes are in docs/sprite-rasterizer.md (both in the Pocket repository, as the 4bpp game's).
 //
 // Only one output line is produced per pass, and tile rows tile the destination
@@ -26,6 +27,7 @@ module k053247_draw #(
     parameter int VIS_Y0 = 17,
     parameter int VIS_H  = 224,
     parameter int LB_AW  = 9,
+    parameter int SB     = 2,           // line buffers: 2**SB slots, a line in slot (line mod 2**SB)
     // k055673 set_config(K055673_LAYOUT_GX, -42, -22) for dadandrn
     parameter int DX = -42,
     parameter int DY = -22
@@ -34,8 +36,10 @@ module k053247_draw #(
     input  logic        reset,
 
     input  logic        line_start,
-    input  logic  [8:0] line,
+    input  logic  [8:0] line,         // held while a line is drawn
+    input  logic        abort,        // drop the line being drawn (the list is being rebuilt, or the line has been shown)
     output logic        busy,
+    output logic        clearing,     // the slot of the line just begun is being cleared
 
     // Only a few bits of each register matter here: k46r5[1:0] is screen flip,
     // opset[6] selects the wrap size, list_q[3:2] is unused drawmode padding.
@@ -70,6 +74,8 @@ module k053247_draw #(
     output logic [10:0] recip_addr,
     input  logic [23:0] recip_q,
 
+    input  logic [SB-1:0]    rd_slot,    // the slot of the line being scanned out (that line mod 2**SB)
+    input  logic             rd_ok,      // that slot holds a line of this frame; if not, nothing is shown
     input  logic [LB_AW-1:0] px,
     output logic        out_opaque,
     output logic [10:0] out_pen,        // palette entry
@@ -98,26 +104,31 @@ module k053247_draw #(
     localparam logic signed [17:0] CBS = 18'(VIS_Y0 + VIS_H - 1);
 
     // ------------------------------------------------------------ buffers
-    // solid and shade are flat arrays a power of two deep, addressed {bank, x}: Quartus 17 builds a
-    // `[2][VIS_W]` array of 576 words 512 deep (bank 1's pixels 224..287 alias bank 0's 0..63), which
-    // the simulator does not show (see k056832_tilemap.sv)
-    logic        bank;
-    logic [21:0] solid [2 << LB_AW];    // {opaque, pen[10:0], pri[7:0], mix[1:0]}
-    logic [10:0] shade [2 << LB_AW];    // {flag, table[1:0], priority[7:0]}
-    logic  [7:0] zbuf  [VIS_W];
-    logic [15:0] szbuf [VIS_W];         // {z, priority}
+    // A ring of 2**SB lines: the drawer works up to 2**SB - 1 lines ahead of the scan-out, so a run of heavy lines
+    // borrows the time the light ones left. solid and shade are flat arrays a power of two deep, addressed
+    // {slot, x}: Quartus 17 builds a 2-D `[N][VIS_W]` array too shallow (a later slot's pixels 224..287 alias an
+    // earlier slot's 0..63), which the simulator does not show (see k056832_tilemap.sv).
+    // The mixer only ever compares a solid pixel's priority as the object's 3-bit group (pri is {w6[7:5], 5'd0}).
+    // This game takes every z code to 0 (konamigx_mixer_primode), so the Z buffer the Gaiapolis drawer carries
+    // would only ever compare >= 0: it is gone, and the shadow buffer keeps a priority and a written flag.
+    logic [SB-1:0] slot;
+    logic [16:0] solid [(1 << SB) << LB_AW];    // {opaque, pen[10:0], pri[7:5], mix[1:0]}
+    logic [10:0] shade [(1 << SB) << LB_AW];    // {flag, table[1:0], priority[7:0]}
+    logic  [8:0] szbuf [VIS_W];                 // {written, priority}
 
-    logic [21:0] rd_solid;
+    logic [16:0] rd_solid;
     logic [10:0] rd_shade;
+    logic        rd_ok_q;
     always_ff @(posedge clk) begin
-        rd_solid <= solid[{~bank, px}];
-        rd_shade <= shade[{~bank, px}];
+        rd_solid <= solid[{rd_slot, px}];
+        rd_shade <= shade[{rd_slot, px}];
+        rd_ok_q  <= rd_ok;
     end
-    assign out_opaque = rd_solid[21];
-    assign out_pen    = rd_solid[20:10];
-    assign out_pri    = rd_solid[9:2];
+    assign out_opaque = rd_solid[16] && rd_ok_q;
+    assign out_pen    = rd_solid[15:5];
+    assign out_pri    = {rd_solid[4:2], 5'd0};
     assign out_mix    = rd_solid[1:0];
-    assign out_shadow = rd_shade[10];
+    assign out_shadow = rd_shade[10] && rd_ok_q;
     assign out_shtab  = rd_shade[9:8];
     assign out_shpri  = rd_shade[7:0];
 
@@ -284,15 +295,11 @@ module k053247_draw #(
     wire signed [17:0] lbis_next  = cur_px + 18'sd1 - CLS;
     wire signed [17:0] lbis_first = pxl - CLS;
     wire [LB_AW-1:0]   rd_lbi = (st == D_PIX) ? lbis_next[LB_AW-1:0] : lbis_first[LB_AW-1:0];
-    logic  [7:0] zb_q;
-    logic [15:0] szb_q;
-    logic [10:0] sh_q;
+    logic  [8:0] szb_q;
     always_ff @(posedge clk) begin
-        zb_q  <= zbuf[rd_lbi];
         szb_q <= szbuf[rd_lbi];
-        sh_q  <= shade[{bank, rd_lbi}];
     end
-    wire [7:0] szb_z = szb_q[15:8];
+    wire       szb_w = szb_q[8];
     wire [7:0] szb_p = szb_q[7:0];
     // the decided pixel, one cycle ahead of its write
     logic            px_valid_a, solid_a, shade_a, ovl_a;
@@ -301,17 +308,22 @@ module k053247_draw #(
 
     /* verilator lint_on UNUSEDSIGNAL */
 
+    assign clearing = (st == D_CLR);
+
     // -------------------------------------------------------------------- FSM
     always_ff @(posedge clk) begin
         px_valid_a <= 1'b0;
         if (reset) begin
-            st <= D_IDLE; busy <= 1'b0; bank <= 1'b0;
+            st <= D_IDLE; busy <= 1'b0; slot <= '0;
             rom_req <= 1'b0; shadow_overlap <= 1'b0; pf_valid <= 1'b0; pf_have <= 1'b0;
             dbg_objs <= '0; dbg_rows <= '0; dbg_cols <= '0; dbg_pxw <= '0;
+        end else if (abort) begin
+            // the line is no longer wanted: whatever was drawn is what stays
+            busy <= 1'b0; st <= D_IDLE;
+            rom_req <= 1'b0; pf_valid <= 1'b0; pf_have <= 1'b0;
         end else if (line_start && st != D_IDLE) begin
-            // the previous line overran its budget: abandon it and start this
-            // one, as the hardware would -- whatever was drawn is what shows
-            bank <= ~bank; busy <= 1'b1;
+            // a line asked for while one is still being drawn: abandon it and start this one
+            slot <= line[SB-1:0]; busy <= 1'b1;
             rom_req <= 1'b0; pf_valid <= 1'b0; pf_have <= 1'b0; clr_i <= '0; st <= D_CLR;
         end else begin
             // a prefetched row arriving while the pixel loop runs
@@ -322,7 +334,7 @@ module k053247_draw #(
                 D_IDLE: begin
                     busy <= 1'b0;
                     if (line_start) begin
-                        bank <= ~bank; busy <= 1'b1; clr_i <= '0; st <= D_CLR;
+                        slot <= line[SB-1:0]; busy <= 1'b1; clr_i <= '0; st <= D_CLR;
                     end
                 end
 
@@ -489,12 +501,11 @@ module k053247_draw #(
                 // path. A row's last write lands in the D_NEXTTX cycle.
                 D_PIX: begin
                     px_valid_a <= 1'b1;
-                    lbi_a <= lbi; pen_a <= pen; ovl_a <= sh_q[10];
+                    lbi_a <= lbi; pen_a <= pen; ovl_a <= szb_w;
                     // drawmode 1 also rejects the shadow pen
                     solid_a <= tile_solid && (pen != 5'd0)
-                            && !(drawmode[1:0] != 2'd0 && pen >= shdpen)
-                            && (zb_q >= zcode);
-                    shade_a <= !tile_solid && (pen >= shdpen) && (szb_z >= zcode) && (szb_p > opri);
+                            && !(drawmode[1:0] != 2'd0 && pen >= shdpen);
+                    shade_a <= !tile_solid && (pen >= shdpen) && ((szb_w ? szb_p : 8'hff) > opri);
                     ddax <= ddax + {8'd0, stride_x};
                     if (cur_px >= pxr) st <= D_NEXTTX;
                     else cur_px <= cur_px + 18'sd1;
@@ -519,18 +530,16 @@ module k053247_draw #(
             // registers: 25K ALUTs)
             if (px_valid_a && solid_a) begin
                 dbg_pxw <= dbg_pxw + 1'd1;
-                zbuf[lbi_a]         <= zcode;
-                solid[{bank, lbi_a}] <= {1'b1, color[5:0], pen_a, opri, mixc};
-                shade[{bank, lbi_a}] <= 11'd0;  // a later solid clears the shadow
+                solid[{slot, lbi_a}] <= {1'b1, color[5:0], pen_a, opri[7:5], mixc};
+                shade[{slot, lbi_a}] <= 11'd0;  // a later solid clears the shadow
             end else if (px_valid_a && shade_a) begin
-                szbuf[lbi_a]        <= {zcode, opri};
-                shade[{bank, lbi_a}] <= {1'b1, shtab, opri};
+                szbuf[lbi_a]        <= {1'b1, opri};
+                shade[{slot, lbi_a}] <= {1'b1, shtab, opri};
                 if (ovl_a) shadow_overlap <= 1'b1;
             end else if (st == D_CLR) begin
-                solid[{bank, clr_i}] <= '0;
-                shade[{bank, clr_i}] <= '0;
-                zbuf[clr_i]  <= 8'hff;
-                szbuf[clr_i] <= 16'hffff;
+                solid[{slot, clr_i}] <= '0;
+                shade[{slot, clr_i}] <= '0;
+                szbuf[clr_i] <= 9'd0;
             end
         end
     end

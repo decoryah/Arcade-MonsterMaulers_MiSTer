@@ -6,8 +6,10 @@
 --   DUMPDIR=<dir>          output directory (state_<frame>.txt and snap_<frame>.png go there)
 --   FORCE_ENABLE=<hex>     override the K055555 layer-enable register, so a single
 --                          layer can be isolated for diffing
---   SCHEDULE=survey|none   the scripted inputs (default: the survey's, which reaches
---                          the title, a game and the continue screen by ~frame 2500)
+--   PICK=l|r               with SCHEDULE=play|playleft: choose the other fighter at the player select
+--   SCHEDULE=survey|play|playleft|none   the scripted inputs (default: the survey's, which reaches
+--                          the title, a game and the continue screen by ~frame 2500; play: an autoplayer that
+--                          continues and reaches the later stages' bosses, the Red Dragon's at ~frame 47000)
 --
 -- Write-only chip registers are shadowed through write taps. VRAM is 16 pages of
 -- 4 KB behind a bank register: after the snapshot is taken (and only then, because
@@ -189,6 +191,40 @@ local SCHED = os.getenv("SCHEDULE") or "survey"
 KEEP.notif = emu.add_machine_frame_notifier(function()
   f = f + 1
   local n = f
+  if SCHED == "play" or SCHED == "playleft" then
+    -- a fighter that walks right and mashes attack, continuing when it dies; it plays through the stages in order
+    -- (the first stage is the default map choice). Same inputs as the autoplayer used to find the later bosses.
+    if n >= 1595 and n < 1700 and (os.getenv("PICK") or "") ~= "" then
+      -- the player select: PICK=l or r presses the stick once (either gives the woman fighter), start confirms
+      local pick = os.getenv("PICK")
+      coin:set_value(0); b1:set_value(0); b2:set_value(0); up:set_value(0); dn:set_value(0)
+      rt:set_value((pick == "r" and n >= 1640 and n < 1648) and 1 or 0)
+      lf:set_value((pick == "l" and n >= 1640 and n < 1648) and 1 or 0)
+      start:set_value((n >= 1670 and n < 1678) and 1 or 0)
+    elseif n >= 1790 and n < 1900 then
+      -- the map select: the stick up and start once, then the autoplayer takes over
+      coin:set_value(0); b1:set_value(0); b2:set_value(0); rt:set_value(0); lf:set_value(0); dn:set_value(0)
+      up:set_value((n >= 1830 and n < 1842) and 1 or 0)
+      start:set_value((n >= 1880 and n < 1890) and 1 or 0)
+    else
+      coin:set_value((n > 200 and (n % 240) < 8) and 1 or 0)
+      start:set_value((n > 260 and (n % 90) < 8 and (n % 240) >= 8) and 1 or 0)
+      if n > 500 then
+        b1:set_value((n % 7 < 3) and 1 or 0)
+        b2:set_value((n % 61 < 2) and 1 or 0)
+        if SCHED == "playleft" and n >= 46000 then
+          -- the Red Dragon fight with the fighter kept at the left edge
+          rt:set_value(0)
+          lf:set_value(1)
+        else
+          rt:set_value((n % 160 < 130) and 1 or 0)
+          lf:set_value(((n + 40) % 400 < 12) and 1 or 0)
+        end
+        up:set_value((n % 97 < 18) and 1 or 0)
+        dn:set_value((n % 131 > 112) and 1 or 0)
+      end
+    end
+  end
   if SCHED == "survey" then
     coin:set_value((n > 200 and (n % 120) < 8) and 1 or 0)
     start:set_value((n > 260 and (n % 90) < 8 and (n % 120) >= 8) and 1 or 0)
