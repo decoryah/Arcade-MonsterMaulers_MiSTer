@@ -95,9 +95,9 @@ HUD) were what ran out of time. Fixed in three parts, all checked against MAME's
 
 In simulation (the same frozen-frame bench, with the SDRAM latency modelled and the drawer given its real 6,144-clock
 line): at 48 clocks of sprite ROM latency 99 of 127 frames of the two dragon fights had late lines with the old drawer
-(4 to 41 of them); with the row cache and a ring of four line buffers 125 of them had none and the other two 3 and 5 (the
-pictures equal the ideal-memory render in 126), and the ring of eight that is built in clears the heaviest frames (the
-dragon's fire) even at 72 clocks. The fit is 549 of 553 M10K.
+(4 to 41 of them); with the row cache and the ring of eight line buffers that is built in none of the 127 has a late line,
+and every one equals the ideal-memory render (a ring of four left two frames with 3 and 5 late lines; the eight clear the
+heaviest, the dragon's fire, even at 72 clocks). The fit is 549 of 553 M10K.
 
 **20261010** -- the first build tested on a board. Two faults the first board test (an earlier build, not published)
 showed were fixed before it:
