@@ -65,9 +65,9 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   DDR3 model with random `BUSY`, with the option switched on and off at random points inside frames; every visible pixel
   of every frame is checked (turned 180 degrees from the frame before, or unchanged). 0 errors, 40 frames.
 * **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7: 48 % of the ALMs
-  (20,013 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
-  at 96 MHz with every check positive (setup +0.32 ns, hold +0.25, recovery +1.88, removal +0.70 in the slow 100 C
-  model; `releases/monstermaulers_20261011.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
+  (19,942 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
+  at 96 MHz with every check positive (setup +0.27 ns, hold +0.18, recovery +1.84, removal +0.76 in the slow 100 C
+  model; `releases/monstermaulers_20261012.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
   brightness -> divide-by-255 step, which is two stages now, and the diagnostic overlay's status word is registered; the
   frame corpus is unchanged by either.
 * **K054539 against MAME, chip level** (`sim/run_k539.sh`): the Z80's register writes to both chips are logged from MAME
@@ -76,6 +76,26 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   of the intro music (56-68 s and 80-95 s), low-passed correlation 0.94-0.98. The latch semantics replay bit-identical.
 
 ## Release history
+
+**20261012** -- Scandoubler Fx and MiSTer.ini's `forced_scandoubler` no longer freeze the picture. With the scandoubler
+on (HQ2x, the CRT filters, or `forced_scandoubler=1`) the core's output had no vertical sync at all: the monitor, or the
+HDMI scaler, saw a stream without frames, the sound played and the picture stood still (31.5 kHz in MiSTer's video
+info). The framework's scandoubler takes its line timing from the falling edges of `HBlank` and needs them on every
+line of the frame, the vertical blank's lines included, and this core's `HBlank` was the picture window (`~de`), high
+through the whole vertical blank. `mm_video.sv` now also outputs the horizontal window alone (`hde`) and
+`MonsterMaulers.sv` gives `arcade_video` that as `HBlank`, with `VBlank` separate; CRT Adjust and Flip Screen keep the
+combined blank they want. The fault was found in the Gaiapolis core (fixed in `gaiapolis_20261011`) and is the same
+wiring here. The 15 kHz outputs were never affected, which is why the board tests on 15 kHz analog and Direct Video did
+not show it.
+
+In simulation: `sim/emu/run_sd.sh` (the raster into `arcade_video` alone) gives no `VGA_VS` at all with the old
+wiring and, with the new one, in every mode (forced, HQ2x, CRT 25 / 50 / 75 %) 528 lines a frame, 448 picture rows of
+288 pixels (576 with HQ2x), a line every 3,072 clocks and a frame period of exactly 1,622,016 clocks, each source
+line twice in order; the whole top level (`sim/emu/run_emu.sh` with `FSD=1`) never sees a frame with the old wiring
+and gives the same 448 rows in 528 lines with the new. The 15 kHz picture of a 110-frame whole-top-level run is
+byte-identical to 20261011's, with the same geometry and the exact frame period. The Red Dragon fix of 20261011 is
+unchanged. The fit is 19,942 ALMs and 549 of 553 M10K, with timing positive everywhere. Tested on a real MiSTer by the
+repository owner: the build runs correctly, the scandoubler modes and the 15 kHz output included.
 
 **20261011** -- the Red Dragon fight's fighters kept their feet. In that fight the fighters' shins and boots were missing
 in a band of about ten rows just above the boss's life bar (the toes reappeared from the life bar's row down), at any
@@ -111,14 +131,14 @@ showed were fixed before it:
   writes are held until key-on, MAME's default) was missing, and the reverb ring index lacked MAME's second add of the
   position. The sum of the two chips also saturates now, as MAME's does, instead of wrapping.
 
-The 20261011 RBF is the one that was played on the board; its fitter and timing summaries are
-`releases/monstermaulers_20261011.fit.summary`, `.sta.summary` and `.ram_depths.txt` (the 20261010 build's are in the first
-commit of the repository's history).
+The 20261012 RBF is the one that was played on the board (it differs from 20261011, which carried the Red Dragon fix,
+only in the blank wiring above). Its fitter and timing summaries are `releases/monstermaulers_20261012.fit.summary`,
+`.sta.summary` and `.ram_depths.txt` (those of the earlier builds are in the repository's history).
 
 ## Install
 
-1. Unzip the release's `MonsterMaulers_MiSTer_20261011.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/monstermaulers_20261011.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
+1. Unzip the release's `MonsterMaulers_MiSTer_20261012.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/monstermaulers_20261012.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `monstermaulers_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `monstermaulers_*.rbf` files.
 2. Put your MAME 0.289 `mmaulers.zip` in `/media/fat/games/mame/` (the parent set; the USA and Japan versions'
@@ -147,6 +167,15 @@ read stably twice, DDR3 FIFO overflow, the number of lines last frame that a ren
 picture began (binary, left square highest; the sprite drawer, the tilemap and the rotating plane are told apart by
 the flags' last three squares), sprites in the list / 4, then flags. Row 1's first 24 squares are the live 68000 bus
 address and flicker. In normal play the line count is 0.
+
+Scandoubler Fx and MiSTer.ini's `forced_scandoubler` make the core's 15 kHz picture a 31 kHz one (every line twice; HQ2x
+and the CRT filters on top). In `monstermaulers_20261010` and `_20261011` they gave no vertical sync at all: the monitor, or
+the HDMI scaler, saw a stream without frames and showed a frozen picture (sound playing, 31.5 kHz in MiSTer's video info).
+The 15 kHz outputs, which are the ones those builds were tested on, are not affected. Fixed in `monstermaulers_20261012`:
+the framework's scandoubler takes its line timing from the horizontal blank's edges and needs them on
+every line, vertical blanking included, and this core's blank was the picture window, high through the whole vertical
+blank. The core now gives it the horizontal blank alone (`hde` from `mm_video.sv`) with the vertical blank separate; the
+15 kHz picture and its timing are as they were (see `docs/mister-memory.md`).
 
 The game is horizontal (ROT0), so there is no rotation option. On a gamepad the default mapping is A / B / R for
 buttons 1 / 2 / 3, Start for Start and Select for Coin (remap it in MiSTer's usual way). Two players; the board has no

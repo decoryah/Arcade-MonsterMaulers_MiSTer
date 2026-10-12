@@ -64,6 +64,30 @@ turns the finished picture 180 degrees through two DDR3 frame buffers, as in the
 rmonic79's module, as there; with this raster the picture is 288 pixels in a line of 384, starting 72 pixels after the hsync
 pulse starts and ending 24 before the next, so H-Size goes to +4 (read period 64 + n quarter-clocks) and H-Position to +20.
 
+## The scandoubler needs the horizontal blank alone
+
+`sys/scandoubler.v` (Scandoubler Fx, MiSTer.ini's `forced_scandoubler`) takes its line timing from the edges of
+`HBlank`: `hb` falling starts a line (`hcnt`, `sd_hcnt`, `hde_start` and the sampling of `vb_in` hang on it) and it
+shifts `vs_in` / `vb_in` through at those edges; `arcade_video` itself samples `VBlank` on `HBlank`'s falling edge.
+So `HBlank` has to toggle on every line of the frame, the vertical blank lines included, with `VBlank` separate.
+This core gave it `~de`, where `de` is the visible *rectangle* (`in_active_x && in_active_y`): `HBlank` stayed high
+through the whole vertical blank, the scandoubler's line counters ran on through the blank lines, and the doubled
+output had no vertical sync and no vertical blank (measured with `sim/emu/run_sd.sh`, the raster module into
+`arcade_video` alone: `vs_sd` and `vb_sd` constant 0 while the mixer's `vs_g` pulsed; `VGA_VS` 0 rises in 14 M
+clocks). The 15 kHz path is not affected, because `arcade_video` without the scandoubler uses the combined blank for
+`VGA_DE` only, which is why the board tests on 15 kHz analog and on Direct Video did not show it. Sound plays, the
+picture is frozen, and MiSTer's video info says ~31.5 kHz.
+
+`mm_video.sv` now also outputs `hde` (`in_active_x`, level with `de`), through `mm_core.sv`; `MonsterMaulers.sv`
+gives `arcade_video` `HBlank = ~hde` (registered with the rest in `vq_hbh`) and `VBlank = vblank`. `VGA_DE` comes
+out the same rows as before (the video mixer ANDs the two). CRT Adjust and Flip Screen keep the combined blank
+(`hblank_c`), which is what they want; CRT Adjust is gated off while the scandoubler is in use.
+
+Measured with `sim/emu/run_sd.sh` (the raster is 384 x 264 pixels of 16 clocks): with the scandoubler on (forced, CRT 25 /
+50 / 75 %) 528 lines a frame, 448 picture rows of 288 pixels (576 with HQ2x), a line every 3,072 clocks, frame period
+exactly 1,622,016 clocks = 16 x 384 x 264, each source line twice in order; with it off 264 lines, 224 rows, 6,144
+clocks a line.
+
 ## Verification
 
 * `sim/run_memrd.sh <image>` (`tb_memrd_top.sv`, `tb_memrd.cpp`): `mm_mem` and `ddr_arb` behind a behavioural SDRAM chip and Avalon

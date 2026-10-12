@@ -92,6 +92,7 @@ module mm_core #(
     output logic        hsync,
     output logic        vsync,
     output logic        de,
+    output logic        hde,        // de without the vertical window (the scandoubler needs a horizontal blank on every line)
     output logic        vblank,
 
     // audio: a stereo sample on every snd_valid (48 kHz, clk/2000)
@@ -139,7 +140,7 @@ module mm_core #(
         .line_start(line_start), .render_line(render_line), .prestart(prestart),
         .renderers_busy(renderers_busy), .overrun(dbg_overrun), .overrun_line(dbg_overrun_line), .overrun_src(dbg_overrun_src),
         .px(px), .px_valid(px_valid), .hcount(hcount), .vcount(vcount),
-        .hsync(hsync), .vsync(vsync), .de(de), .vblank(vblank), .vblank_rise(vblank_rise)
+        .hsync(hsync), .vsync(vsync), .de(de), .hde(hde), .vblank(vblank), .vblank_rise(vblank_rise)
     );
     assign dbg_vcount = vcount;
 

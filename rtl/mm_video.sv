@@ -64,6 +64,7 @@ module mm_video #(
     output logic        hsync,
     output logic        vsync,
     output logic        de,
+    output logic        hde,            // de without the vertical window: the horizontal blank alone, on every line
     output logic        vblank,
     output logic        vblank_rise     // one clk pulse at the start of vblank
 );
@@ -85,7 +86,7 @@ module mm_video #(
         vblank_rise <= 1'b0;
         if (reset) begin
             hcount <= '0; vcount <= '0; overrun <= 1'b0; overrun_src <= '0;
-            hsync <= 1'b0; vsync <= 1'b0; de <= 1'b0; vblank <= 1'b1; vb_prev <= 1'b1;
+            hsync <= 1'b0; vsync <= 1'b0; de <= 1'b0; hde <= 1'b0; vblank <= 1'b1; vb_prev <= 1'b1;
             px <= '0; px_valid <= 1'b0; render_line <= '0;
         end else if (cen_pix) begin
             // raster counters
@@ -116,6 +117,7 @@ module mm_video #(
 
             // timing outputs, level with px / px_valid (and so with the colour that ends this period)
             de     <= in_active_x && in_active_y;
+            hde    <= in_active_x;
             hsync  <= hs_c;
             vsync  <= vs_c;
             vb_r   <= !in_active_y;

@@ -30,6 +30,8 @@ static const long IMG_LEN = 0x1640000;
 static const unsigned long long LINE_CLK = 16ull * 384, FRAME_CLK = LINE_CLK * 264;
 static std::vector<unsigned> frame_now(VIS_W * VIS_H), frame_last(VIS_W * VIS_H);
 static int de_count = 0, frames_done = 0, de_last_count = 0;
+// the framework's scandoubler (Scandoubler Fx, forced_scandoubler): every line twice, HQ2x also twice as wide
+static int sd_mul = 1; static bool sd_hq = false;
 static bool prev_vs = false;
 static unsigned long long last_frame_cycle = 0, frame_period = 0;
 static std::vector<unsigned long long> periods;
@@ -107,7 +109,7 @@ static void video_watch() {
     }
     bool vs = dut->VGA_VS;
     if (vs && !prev_vs) {                       // a frame ends
-        if (de_count == VIS_W * VIS_H) frame_last = frame_now;
+        if (de_count == VIS_W * VIS_H * sd_mul) frame_last = frame_now;
         de_last_count = de_count;
         frame_period = cycles - last_frame_cycle; last_frame_cycle = cycles;
         if (record_periods) periods.push_back(frame_period);
@@ -115,7 +117,12 @@ static void video_watch() {
     }
     prev_vs = vs;
     if (dut->CE_PIXEL && dut->VGA_DE) {
-        if (de_count < VIS_W * VIS_H) frame_now[de_count] = ((unsigned)dut->VGA_R << 16) | ((unsigned)dut->VGA_G << 8) | dut->VGA_B;
+        unsigned px = ((unsigned)dut->VGA_R << 16) | ((unsigned)dut->VGA_G << 8) | dut->VGA_B;
+        if (sd_mul == 1) { if (de_count < VIS_W * VIS_H) frame_now[de_count] = px; }
+        else {   // scandoubled: keep the even rows (and the even columns of HQ2x's double width) as the 288 x 224 picture
+            int w2 = VIS_W * (sd_hq ? 2 : 1), row = de_count / w2, col = de_count % w2;
+            if (!(row & 1) && !(sd_hq && (col & 1)) && row / 2 < VIS_H) frame_now[(row / 2) * VIS_W + (sd_hq ? col / 2 : col)] = px;
+        }
         de_count++;
     }
 }
@@ -175,6 +182,12 @@ int main(int argc, char **argv) {
         if (getenv("HPOS")) { int v = atoi(getenv("HPOS")); field(20, 7, v >= 0 ? v : 69 + v); }
         if (getenv("VSHIFT")) field(27, 5, atoi(getenv("VSHIFT")) & 31);
     }
+    {   // the framework's settings the OSD does not hold: forced_scandoubler (MiSTer.ini); Scandoubler Fx is OSD status[5:3]
+        if (getenv("FSD") && atoi(getenv("FSD"))) HPSV(r_fsd) = 1;
+        if (getenv("FX")) { int v = atoi(getenv("FX")); for (int i = 0; i < 3; i++) set_status(3 + i, (v >> i) & 1); }
+        const bool fsd = getenv("FSD") && atoi(getenv("FSD")); const int fx = getenv("FX") ? atoi(getenv("FX")) : 0;
+        if (fsd || fx) { sd_hq = (fx == 1); sd_mul = sd_hq ? 4 : 2; printf("scandoubler on (Fx %d, forced %d): expect %d rows of %d pixels, %d lines a frame\n", fx, (int)fsd, 2 * VIS_H, VIS_W * (sd_hq ? 2 : 1), 2 * 264); }
+    }
     if (getenv("MONO") && atoi(getenv("MONO"))) set_status(8, 1);
     if (getenv("TEST") && atoi(getenv("TEST"))) set_status(6, 1);
     run(40000);                                  // SDRAM init, cache sweeps
@@ -232,8 +245,8 @@ int main(int argc, char **argv) {
     unsigned long long guard = 0;
     record_periods = true;
     while (frames_done < target && guard++ < 4000000000ull) tick(), video_watch();
-    printf("%d frames after the load, last frame had %d visible pixels (expect %d)\n", frames_done - start_frames, de_last_count, VIS_W * VIS_H);
-    if (de_last_count != VIS_W * VIS_H) { printf("  FAIL: visible pixel count\n"); errors++; }
+    printf("%d frames after the load, last frame had %d visible pixels (expect %d)\n", frames_done - start_frames, de_last_count, VIS_W * VIS_H * sd_mul);
+    if (de_last_count != VIS_W * VIS_H * sd_mul) { printf("  FAIL: visible pixel count\n"); errors++; }
 
     {   // the raster's period: 16 clocks a pixel, 384 x 264
         printf("frame period %llu clocks (expect %llu = %.4f Hz)\n", frame_period, FRAME_CLK, 96e6 / (double)FRAME_CLK);
@@ -255,6 +268,9 @@ int main(int argc, char **argv) {
     printf("geometry (last frame): %d rows with picture, %d lines a frame; first row %ld clocks after the vsync pulse (%.3f lines);"
            " rows start %ld..%ld clocks after hsync, %ld..%ld clocks wide\n",
            geo_rows, geo_lines, geo_first, geo_first / (double)LINE_CLK, geo_smin, geo_smax, geo_wmin, geo_wmax);
+    if (sd_mul > 1 && (geo_rows != 2 * VIS_H || geo_lines != 2 * 264)) {
+        printf("  FAIL: the scandoubled raster should be %d rows in %d lines\n", 2 * VIS_H, 2 * 264); errors++;
+    }
 #ifdef PROBE
     printf("probe: status[9]=%u  core de clocks %u  core cen_pix ticks %u  max core rgb %06x  max overlay out %06x  VGA nonzero clocks %u (in DE %u)\n",
            pk_en, pk_gade, pk_cen, pk_core, pk_ovl, pk_vga_any, pk_arc);

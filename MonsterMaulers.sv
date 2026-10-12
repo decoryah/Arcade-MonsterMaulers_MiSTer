@@ -294,7 +294,7 @@ wire  [6:0] eep_addr  = ioctl_addr[6:0];
 wire  [7:0] eep_wdata = ioctl_dout;
 assign      ioctl_din = eep_q;
 
-wire        mm_cen_pix, mm_hs, mm_vs, mm_de, mm_vb;
+wire        mm_cen_pix, mm_hs, mm_vs, mm_de, mm_hde, mm_vb;
 wire [23:0] mm_rgb;
 wire [15:0] mm_snd_l, mm_snd_r;
 wire        mm_snd_valid;
@@ -318,7 +318,7 @@ mm_core #(.HEXDIR("rtl/data")) mm
 	.pcm_req(pcm_req), .pcm_addr(pcm_addr), .pcm_ack(pcm_ack), .pcm_q(pcm_q),
 	.eep_ld_we(eep_we), .eep_ld_addr(eep_addr), .eep_ld_wdata(eep_wdata), .eep_ld_q(eep_q), .eep_dirty(eep_dirty),
 	.in0_p1(in0_p1), .in1(in1), .p2(p2),
-	.cen_pix(mm_cen_pix), .rgb(mm_rgb), .hsync(mm_hs), .vsync(mm_vs), .de(mm_de), .vblank(mm_vb),
+	.cen_pix(mm_cen_pix), .rgb(mm_rgb), .hsync(mm_hs), .vsync(mm_vs), .de(mm_de), .hde(mm_hde), .vblank(mm_vb),
 	.snd_l(mm_snd_l), .snd_r(mm_snd_r), .snd_valid(mm_snd_valid),
 	.dbg_addr(dbg_addr), .dbg_data(dbg_data), .dbg_busstate(dbg_busstate), .dbg_step(dbg_step), .dbg_irq5(dbg_irq5),
 	.dbg_overrun(dbg_overrun), .dbg_overrun_line(dbg_overrun_line), .dbg_overrun_src(dbg_overrun_src), .dbg_draw_objs(), .dbg_draw_rows(), .dbg_draw_cols(), .dbg_draw_pxw(),
@@ -407,7 +407,11 @@ assign AUDIO_R = status[8] ? aud_l : aud_r;      // mono: the left mix on both
 
 // the core emits one pixel per 6 MHz enable on the 96 MHz clock and holds it
 // for the sixteen clocks; its de is the visible rectangle, its vblank the
-// vertical blanking, so HBlank follows de and is high through the vertical blank
+// vertical blanking. hblank_c follows de, so it is high through the vertical blank: CRT Adjust and Flip Screen want that.
+// The framework's scandoubler and arcade_video take their line timing from the falling edges of HBlank and need it to
+// toggle on every line of the frame, the vertical blank's included (VBlank is separate), so the scandoubler path (Scandoubler
+// Fx, MiSTer.ini's forced_scandoubler) is given the horizontal blank alone (mm_hde, vq_hbh below). The 15 kHz path's
+// output rows are the same either way: the video mixer ANDs the two blanks.
 wire hblank_c = ~mm_de;
 
 // Flip Screen: the finished picture (overlay included) turned 180 degrees, one frame late, through
@@ -426,9 +430,9 @@ flip_buf #(.W(288), .H(224)) u_flip
 // the finished picture's signals, one clock later, before they meet the CRT Adjust select: the long path from the
 // 68000's registers through the diagnostic overlay's address squares ends in this register instead of behind the select
 reg [23:0] vq_rgb;
-reg        vq_hb, vq_vb, vq_hs, vq_vs, vq_ce;
+reg        vq_hb, vq_hbh, vq_vb, vq_hs, vq_vs, vq_ce;
 always @(posedge clk_sys) begin
-	vq_rgb <= flip_rgb; vq_hb <= hblank_c; vq_vb <= mm_vb; vq_hs <= mm_hs; vq_vs <= mm_vs; vq_ce <= mm_cen_pix;
+	vq_rgb <= flip_rgb; vq_hb <= hblank_c; vq_hbh <= ~mm_hde; vq_vb <= mm_vb; vq_hs <= mm_hs; vq_vs <= mm_vs; vq_ce <= mm_cen_pix;
 end
 
 // CRT Adjust: the size, horizontal position and vertical position of the picture on a 15 kHz analog output
@@ -497,7 +501,7 @@ arcade_video #(.WIDTH(288), .DW(24), .GAMMA(1)) arcade_video
 	.clk_video(clk_sys),
 	.ce_pix(crt_on ? crt_rd_en : vq_ce),
 	.RGB_in(crt_on ? {crt_r, crt_g, crt_b} : vq_rgb),
-	.HBlank(crt_on ? (crt_hb | crt_hs) : vq_hb),   // CRT Adjust: nothing of the picture inside the hsync pulse
+	.HBlank(crt_on ? (crt_hb | crt_hs) : vq_hbh),  // CRT Adjust: nothing of the picture inside the hsync pulse; else the horizontal blank alone
 	.VBlank(crt_on ? 1'b0 : vq_vb),             // CRT Adjust: the module's blank already includes the vertical one
 	.HSync(crt_on ? crt_hs : vq_hs),
 	.VSync(crt_on ? crt_vs : vq_vs),
