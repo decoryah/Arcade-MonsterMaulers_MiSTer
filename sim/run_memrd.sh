@@ -2,7 +2,9 @@
 # Memory-subsystem gate (target/mister/mm_mem.sv behind behavioural SDRAM and Avalon DDR3): the image through the
 # loader (or BACKDOOR=1: straight into the chips), then every region read back through the machine's ports.
 #   sim/run_memrd.sh <image.rom> [reads per port, default 20000]
-# Environment: BACKDOOR=1, SEED=n, OBJ=<build dir> (default obj_memrd)
+# Environment: BACKDOOR=1, FAST=1 (the HPS side of the MRA's address= attribute: the image goes into the DDR3 model at
+# byte 0x32000000 and the loader replays it; FLTRACE=1 prints the replay's state every million clocks), SEED=n,
+# OBJ=<build dir> (default obj_memrd)
 set -e
 cd "$(dirname "$0")"
 ROM="$1"; [ -f "$ROM" ] || { echo "usage: $0 <image.rom> [reads]" >&2; exit 2; }

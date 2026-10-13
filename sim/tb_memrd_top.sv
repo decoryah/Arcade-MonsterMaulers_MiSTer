@@ -13,6 +13,7 @@ module tb_memrd_top #(
     input  logic        dl_start,
     input  logic        dl_we, input logic [24:0] dl_addr, input logic [7:0] dl_data,
     output logic        dl_wait,
+    input  logic        fl_go, input logic [24:0] fl_len, output logic fl_done,     // fast load: the image is in the DDR3
     output logic        mem_ready,
 
     input  logic        prog_req, input logic [22:1] prog_addr, output logic prog_ack, output logic [15:0] prog_q,
@@ -38,6 +39,7 @@ module tb_memrd_top #(
         .clk(clk), .clk_sdram(clk), .init(reset), .dl_start(dl_start), .ready(mem_ready), .rd_late(1'b0), .burst_slow(1'b0),
         .test_start(1'b0), .test_run(), .test_done(), .test_ok(), .test_stable(), .vram_ok(), .vram_bad(),
         .dl_we(dl_we), .dl_addr(dl_addr), .dl_data(dl_data), .dl_wait(dl_wait),
+        .fl_go(fl_go), .fl_len(fl_len), .fl_done(fl_done),
         .prog_req(prog_req), .prog_addr(prog_addr), .prog_ack(prog_ack), .prog_q(prog_q),
         .tile_req(tile_req), .tile_addr(tile_addr), .tile_ack(tile_ack), .tile_q(tile_q),
         .map_req(map_req), .map_addr(map_addr), .map_ack(map_ack), .map_q(map_q),
@@ -66,7 +68,7 @@ module tb_memrd_top #(
         .DDRAM_RD(DDRAM_RD), .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE),
         .overflow(ddr_overflow)
     );
-    ddr_model #(.AW(20), .LAT(DDR_LAT), .BUSY_PCT(DDR_BUSY_PCT)) ddr (
+    ddr_model #(.AW(23), .LAT(DDR_LAT), .BUSY_PCT(DDR_BUSY_PCT)) ddr (
         .clk(clk), .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
         .DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY),
         .DDRAM_RD(DDRAM_RD), .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE)

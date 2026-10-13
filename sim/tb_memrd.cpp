@@ -6,7 +6,8 @@
 //
 //   tb_memrd <image.rom> [reads per port, default 20000]
 // Environment: BACKDOOR=1 places the image directly (the same address arithmetic as the loader),
-//              SEED=n
+//              FAST=1 the fast load: the image in the DDR3 at byte 0x32000000, replayed by the loader (fl_go / fl_done),
+//              FLTRACE=1 its progress every million clocks (needs a build with --public-flat-rw), SEED=n
 #include "Vtb_memrd_top.h"
 #include "Vtb_memrd_top___024root.h"
 #include "verilated.h"
@@ -135,6 +136,31 @@ int main(int argc, char **argv) {
             else sd[SD_SPR + 5 * (wa - 0xA20000) + 4] = v;
         }
         printf("image placed by the backdoor\n");
+    } else if (getenv("FAST") && atoi(getenv("FAST"))) {
+        // the HPS side of an MRA with address=: the whole image in the DDR3 (little-endian beats at byte 0x32000000 =
+        // beat 0x400000 of the client's window), a download that starts and ends with no bytes, then the core replays it
+        auto &dd = dut->rootp->tb_memrd_top__DOT__ddr__DOT__mem;
+        for (size_t i = 0; i < O_END / 8; i++) {
+            unsigned long long v = 0;
+            for (int b = 7; b >= 0; b--) v = (v << 8) | img[i * 8 + b];
+            dd[0x400000 + i] = v;
+        }
+        dut->dl_start = 1; tick(); dut->dl_start = 0;
+        for (int i = 0; i < 40; i++) tick();
+        unsigned long long t1 = cycles;
+        dut->fl_len = (unsigned)O_END; dut->fl_go = 1; tick(); dut->fl_go = 0;
+        long g = 0; const long GUARD = 300000000;
+        auto &um = *dut->rootp;
+        while (!dut->fl_done && g++ < GUARD) {
+            tick();
+            if (getenv("FLTRACE") && (g % 1000000) == 0)
+                printf("  t=%ld fst %d dst %d wst %d wf %d..%d off_w %u bn %d\n", g, (int)um.tb_memrd_top__DOT__u_mem__DOT__fst, (int)um.tb_memrd_top__DOT__u_mem__DOT__dst,
+                       (int)um.tb_memrd_top__DOT__u_mem__DOT__wst, (int)um.tb_memrd_top__DOT__u_mem__DOT__wf_rp, (int)um.tb_memrd_top__DOT__u_mem__DOT__wf_wp,
+                       (unsigned)um.tb_memrd_top__DOT__u_mem__DOT__fl_off_w, (int)um.tb_memrd_top__DOT__u_mem__DOT__bn);
+        }
+        printf("fast load: replayed in %llu clocks (%.3f s at 96 MHz)%s\n", cycles - t1, (cycles - t1) / 96e6, g >= GUARD ? "  TIMEOUT" : "");
+        if (g >= GUARD) { errors++; }
+        for (int i = 0; i < 40; i++) tick();
     } else {
         dut->dl_start = 1; tick(); dut->dl_start = 0;
         for (size_t i = 0; i < O_END; i++) {

@@ -30,7 +30,8 @@
 `default_nettype none
 
 module mm_mem #(
-    parameter int TEST_SHRINK = 0       // the memory test reads 1/2^n of each region (benches)
+    parameter int TEST_SHRINK = 0,      // the memory test reads 1/2^n of each region (benches)
+    parameter [24:0] FL_BASE = 25'h0400000  // fast load: the DDR3 beat of the image in the client's window (byte 0x32000000)
 ) (
     input  logic        clk,            // 96 MHz
     input  logic        clk_sdram,      // 96 MHz, phase-shifted: drives the SDRAM clock pin
@@ -53,6 +54,14 @@ module mm_mem #(
     input  logic [24:0] dl_addr,
     input  logic  [7:0] dl_data,
     output logic        dl_wait,        // hold the next byte
+
+    // fast load (the MRA's address= attribute): Main_MiSTer has put the whole image into DDR3 at FL_BASE in one
+    // go and ended an empty download; `fl_go` (one clock) says so and `fl_len` is the image's length in bytes.
+    // The image is read back and its words pushed into the loader's FIFO as if the HPS had streamed them;
+    // `fl_done` (one clock) comes when the last of them has been written
+    input  logic        fl_go,
+    input  logic [24:0] fl_len,
+    output logic        fl_done,
 
     // core ports
     input  logic        prog_req,  input  logic [22:1] prog_addr, output logic prog_ack, output logic [15:0] prog_q,
@@ -119,6 +128,11 @@ module mm_mem #(
         end
     end
 
+    // a fast load's word, produced by the DDR3 block reader below one clock before it is pushed
+    logic        fl_wv;
+    logic [23:0] fl_wa;
+    wire  [15:0] fl_word = {blk_data[7:0], blk_data[15:8]};     // the beat's little-endian halfword, as the image's big-endian word
+
     (* ramstyle = "no_rw_check" *) logic [41:0] wfifo [64];   // the head is never the entry being written
     logic  [6:0] wf_wp, wf_rp;
     wire         wf_empty = (wf_wp == wf_rp);
@@ -161,8 +175,8 @@ module mm_mem #(
             end else if (pend_v) begin
                 if (pend_age == 8'hff) pend_v <= 1'b0; else pend_age <= pend_age + 8'd1;
             end
-            if (wf_push) begin              // not full: the HPS stops at dl_wait with 32 queued
-                wfifo[wf_wp[5:0]] <= wf_in;
+            if (wf_push || fl_wv) begin     // not full: the HPS stops at dl_wait with 32 queued, a fast load waits for room
+                wfifo[wf_wp[5:0]] <= fl_wv ? {fl_wa, 2'b11, fl_word} : wf_in;
                 wf_wp <= wf_wp + 7'd1;
             end
             case (wst)
@@ -428,28 +442,45 @@ module mm_mem #(
     wire         mr_l   = map_addr_l[18];
     wire         mc_hit = mc_v[mr_l] && (mc_tag[mr_l] == map_addr_l[18:3]);
 
-    typedef enum logic [3:0] { D_IDLE, D_MC, D_MS, D_MA, D_BS, D_BO, D_BA, D_WR } dst_t;
+    typedef enum logic [3:0] { D_IDLE, D_MC, D_MS, D_MA, D_BS, D_BO, D_BA, D_WR, D_FE } dst_t;
     dst_t dst;
+
+    // fast load: the image is read back a 256-byte block at a time (32 beats, the character block's burst) into
+    // the character buffer, which is idle while the core is in reset, and its 128 words go into the loader's FIFO
+    typedef enum logic [1:0] { F_IDLE, F_REQ, F_WAIT, F_FIN } fst_t;
+    fst_t        fst;
+    logic [24:0] fl_off_w, fl_end_w;    // the block's first word, the image's length in words
+    logic        fl_req, fl_blk, fl_blk_done, fl_resume;
+    wire         fl_room = ((wf_wp - wf_rp) < 7'd56);    // the FIFO has room for this word and the one in flight
 
     always_ff @(posedge clk) begin
         map_ack <= 1'b0; blk_ack <= 1'b0; blk_wr <= 1'b0; ddr_wr_ack <= 1'b0;
+        fl_wv <= 1'b0; fl_blk_done <= 1'b0; fl_done <= 1'b0;
         map_ack_d <= map_ack; blk_ack_d <= blk_ack;
         if (ddr_rd && !ddr_busy) ddr_rd <= 1'b0;            // taken (cleared first: a state may present the next command below)
         if (ddr_we && !ddr_busy) ddr_we <= 1'b0;
         if (cinv) begin
             mc_v <= '0; dst <= D_IDLE; ddr_rd <= 1'b0; ddr_we <= 1'b0;
+            fst <= F_IDLE; fl_req <= 1'b0; fl_blk <= 1'b0; fl_resume <= 1'b0;
         end else case (dst)
             D_IDLE: begin
                 if (ddr_wr_req && !ddr_wr_ack) begin                    // the loader's write
                     ddr_we <= 1'b1; ddr_addr <= ddr_wr_beat; ddr_burst <= 8'd1;
                     ddr_din <= {4{wd}}; ddr_be <= 8'b11 << {ddr_wr_lane, 1'b0};
                     dst <= D_WR;
+                end else if (fl_resume) begin                           // fast load: the block waits for room in the FIFO
+                    if (fl_room) begin fl_resume <= 1'b0; dst <= D_BO; end
                 end else if (map_req_i && !map_ack && !map_ack_d) begin
                     map_addr_l <= map_addr_i;               // the lookup works from this register, next clock
                     dst <= D_MC;
                 end else if (blk_req_i && !blk_ack && !blk_ack_d) begin
                     blk_addr_l <= blk_addr_i;
                     ddr_rd <= 1'b1; ddr_addr <= DD_CHR + {7'd0, blk_addr_i[12:0], 5'd0}; ddr_burst <= 8'd32;
+                    bn <= '0;
+                    dst <= D_BS;
+                end else if (fl_req) begin                              // fast load: the next block of the image
+                    fl_req <= 1'b0; fl_blk <= 1'b1;
+                    ddr_rd <= 1'b1; ddr_addr <= FL_BASE + 25'(fl_off_w[24:2]); ddr_burst <= 8'd32;
                     bn <= '0;
                     dst <= D_BS;
                 end
@@ -500,10 +531,21 @@ module mm_mem #(
                 bbuf[bn[4:0]] <= ddr_dout; bn <= bn + 6'd1;
                 if (bn == 6'd31) begin bo <= '0; dst <= D_BO; end
             end
-            D_BO: begin
-                blk_wr <= 1'b1; blk_idx <= bo[6:0]; blk_data <= bbuf[bo[6:2]][16 * bo[1:0] +: 16];
+            // the block's words go to the plane's tile cache; for a fast load to the loader's FIFO instead (the same
+            // read of the buffer: a second read port would cost a copy of the RAM), as room allows
+            // The loader's FIFO fills while its DDR3 writes (ROZ characters and map, which need this state machine)
+            // wait behind it, so a fast load without room goes back to D_IDLE, where those writes are served, and resumes
+            D_BO: if (fl_blk && !fl_room) begin
+                fl_resume <= 1'b1; dst <= D_IDLE;
+            end else begin
+                blk_wr <= !fl_blk; blk_idx <= bo[6:0]; blk_data <= bbuf[bo[6:2]][16 * bo[1:0] +: 16];
+                fl_wv <= fl_blk && ({fl_off_w[24:7], bo[6:0]} < fl_end_w);
+                fl_wa <= {fl_off_w[23:7], bo[6:0]};
                 bo <= bo + 8'd1;
-                if (bo == 8'd127) dst <= D_BA;
+                if (bo == 8'd127) dst <= fl_blk ? D_FE : D_BA;
+            end
+            D_FE: begin                                  // the last word is pushed this clock
+                fl_blk <= 1'b0; fl_blk_done <= 1'b1; dst <= D_IDLE;
             end
             D_BA: begin
                 if (blk_req_i && blk_addr_i == blk_addr_l) blk_ack <= 1'b1;
@@ -512,6 +554,22 @@ module mm_mem #(
 
             D_WR: if (ddr_we && !ddr_busy) begin ddr_wr_ack <= 1'b1; dst <= D_IDLE; end
             default: dst <= D_IDLE;
+        endcase
+
+        // the fast load's block sequencer
+        if (!cinv) case (fst)
+            F_IDLE: if (fl_go) begin
+                fl_off_w <= '0; fl_end_w <= {1'b0, fl_len[24:1]} + {24'd0, fl_len[0]};
+                fst <= F_REQ;
+            end
+            F_REQ: begin fl_req <= 1'b1; fst <= F_WAIT; end
+            F_WAIT: if (fl_blk_done) begin
+                fl_off_w <= fl_off_w + 25'd128;
+                fst <= (fl_off_w + 25'd128 >= fl_end_w) ? F_FIN : F_REQ;
+            end
+            // done when the loader has written every word (an entry leaves the FIFO when its write is acknowledged)
+            F_FIN: if (wf_empty && wst == W_IDLE && !fl_wv) begin fl_done <= 1'b1; fst <= F_IDLE; end
+            default: fst <= F_IDLE;
         endcase
     end
 

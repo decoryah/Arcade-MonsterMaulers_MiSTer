@@ -6,7 +6,9 @@
 //     (VGA_*, 288x224) and checking the raster (frame period, rows, geometry),
 //   * with PROBE=1, checks Flip Screen: the picture is the flip stage's input turned
 //     180 degrees, one frame late,
-//   * reads the EEPROM back through the upload path (the save) and compares it.
+//   * reads the EEPROM back through the upload path (the save) and compares it,
+//   * with SCALE / AR / HW / HH set, checks the size the core asks the HDMI scaler for (Scale option: framework's video_freak)
+//     against the integer-scaling rule worked out here from the picture's rows and width (see check_scale()).
 //
 //   tb_emu <image> <eeprom-default-file> <frames> <out-prefix> [diag] [noload]
 // <image> is the MiSTer-layout image (0x1640000 bytes, tools/mra_build.py on a mra/*.mra);
@@ -171,6 +173,8 @@ int main(int argc, char **argv) {
     if (getenv("SKIPDLY") && atoi(getenv("SKIPDLY"))) { img[0x4228] = 0x00; img[0x4229] = 0x10; }
 
     dut = new Vtb_emu_top;
+    dut->HDMI_WIDTH  = getenv("HW") ? atoi(getenv("HW")) : 1920;
+    dut->HDMI_HEIGHT = getenv("HH") ? atoi(getenv("HH")) : 1080;
     dut->RESET = 1; run(40); dut->RESET = 0;
     if (diag) set_status(9, 1);                 // diagnostic overlay + memory test at the end of the load
     bool flip = getenv("FLIP") && atoi(getenv("FLIP"));
@@ -188,6 +192,11 @@ int main(int argc, char **argv) {
         const bool fsd = getenv("FSD") && atoi(getenv("FSD")); const int fx = getenv("FX") ? atoi(getenv("FX")) : 0;
         if (fsd || fx) { sd_hq = (fx == 1); sd_mul = sd_hq ? 4 : 2; printf("scandoubler on (Fx %d, forced %d): expect %d rows of %d pixels, %d lines a frame\n", fx, (int)fsd, 2 * VIS_H, VIS_W * (sd_hq ? 2 : 1), 2 * 264); }
     }
+    {   // Scale (status[34:32]: 0 Normal, 1 V-Integer, 2 HV-Integer, 3 Narrower HV-Integer, 4 HV-Integer+), Aspect ratio (status[122:121])
+        auto field = [&](int lo, int w, int v) { for (int i = 0; i < w; i++) set_status(lo + i, (v >> i) & 1); };
+        if (getenv("SCALE")) field(32, 3, atoi(getenv("SCALE")));
+        if (getenv("AR")) field(121, 2, atoi(getenv("AR")));
+    }
     if (getenv("MONO") && atoi(getenv("MONO"))) set_status(8, 1);
     if (getenv("TEST") && atoi(getenv("TEST"))) set_status(6, 1);
     run(40000);                                  // SDRAM init, cache sweeps
@@ -198,8 +207,29 @@ int main(int argc, char **argv) {
     } else {
         printf("up after %llu clocks; loading %ld bytes\n", cycles, IMG_LEN);
         unsigned long long t0 = cycles;
-        download(0, img.data(), IMG_LEN, 2);
-        printf("image loaded in %llu clocks\n", cycles - t0);
+        if (getenv("FAST") && atoi(getenv("FAST"))) {
+            // what Main_MiSTer does for address= on the MRA's index-0 <rom>: the whole assembled image is copied into the DDR3
+            // at that address, between the start and the end of a download that carries no bytes, only a start address
+            // (ioctl_addr) that is the image's length; hps_io counts one more at the end. The core then replays it
+            auto &dd = dut->rootp->tb_emu_top__DOT__ddr__DOT__mem;
+            const size_t FLB = 0x400000;                 // beats in the client's window: byte 0x32000000
+            for (size_t i = 0; i < (size_t)IMG_LEN / 8; i++) {
+                unsigned long long v = 0;
+                for (int b = 7; b >= 0; b--) v = (v << 8) | img[i * 8 + b];
+                dd[FLB + i] = v;
+            }
+            HPSV(r_index) = 0; HPSV(r_addr) = IMG_LEN; HPSV(r_download) = 1; run(64);
+            HPSV(r_addr) = IMG_LEN + 1; HPSV(r_download) = 0;
+            unsigned long long t1 = cycles; long guard = 0;
+            const long GUARD = 400000000;
+            while (dut->rootp->tb_emu_top__DOT__u_emu__DOT__fast_dl && guard++ < GUARD) run(1);
+            printf("fast load: the image replayed from the DDR3 in %llu clocks (%.3f s at 96 MHz)\n", cycles - t1, (cycles - t1) / 96e6);
+            if (guard >= GUARD) { printf("  FAIL: the replay did not finish\n"); errors++; }
+            run(8);
+        } else {
+            download(0, img.data(), IMG_LEN, 2);
+            printf("image loaded in %llu clocks\n", cycles - t0);
+        }
         {   // the loader's work against the layout of target/mister/mm_mem.sv: every word of the image where the
             // memory subsystem's ports (and the backdoor of sim/tb_mm.cpp) expect it, in the chips' own arrays
             run(4000);
@@ -270,6 +300,47 @@ int main(int argc, char **argv) {
            geo_rows, geo_lines, geo_first, geo_first / (double)LINE_CLK, geo_smin, geo_smax, geo_wmin, geo_wmax);
     if (sd_mul > 1 && (geo_rows != 2 * VIS_H || geo_lines != 2 * 264)) {
         printf("  FAIL: the scandoubled raster should be %d rows in %d lines\n", 2 * VIS_H, 2 * 264); errors++;
+    }
+    {   // Scale: the size the core asks the scaler for. Worked out here from the picture as it leaves arcade_video (rows,
+        // pixels in a row), the OSD settings and the scaler's size, by the framework's documented rule: the picture is
+        // scaled up by the largest whole factor that fits the scaler's height; its width follows the aspect ratio (V-Integer)
+        // or is a whole multiple of the pixel row (the HV modes: narrower = the multiple below the aspect width, wider = the
+        // one above it, HV-Integer = whichever of the two is nearer, the wider one only if it still fits the width)
+        const int menu = getenv("SCALE") ? atoi(getenv("SCALE")) : 0, ar = getenv("AR") ? atoi(getenv("AR")) : 0;
+        const int HW = dut->HDMI_WIDTH, HH = dut->HDMI_HEIGHT;
+        const int rows = geo_rows, w = VIS_W * (sd_hq ? 2 : 1);
+        static const int map[5] = {0, 1, 4, 2, 3};                    // the OSD's order -> video_freak's SCALE
+        const int sel = (menu >= 0 && menu <= 4) ? map[menu] : 0;
+        // Full Screen (0 / 0) has no proportions for the integer rule to work from: with an integer mode the core
+        // gives it the scaler's own (MonsterMaulers.sv's fs_int), unless the scaler's size is unknown (direct video)
+        const bool fs_int = ar == 1 && sel != 0 && HW != 0 && HH != 0;
+        const int arx_in = fs_int ? HW : (ar == 0 ? 4 : ar - 1), ary_in = fs_int ? HH : (ar == 0 ? 3 : 0);
+        int ex = arx_in, ey = ary_in; bool eabs = false, checked = true;
+        if (sel && !(!ary_in && arx_in) && HH / rows > 0) {
+            int oh = rows * (HH / rows), ht = 0, hi, dn;
+            if (!ary_in) {                                            // no proportions at all: the framework's own rule, reported not judged
+                int m = HW / w ? HW / w : 1; hi = w * m; oh = rows * m; dn = HW; checked = false;
+            } else {
+                ht = (int)((long)oh * arx_in / ary_in); int m0 = ht / w ? ht / w : 1; hi = w * m0; dn = ht;
+                if (hi > HW) { int m1 = HW / w ? HW / w : 1; hi = w * m1; oh = rows * m1; dn = HW; }
+            }
+            const int wide = hi + w;
+            const bool narrow = (((ht - hi) & 0xfff) <= ((wide - ht) & 0xfff)) || wide > HW;
+            const int wres = hi == ht ? hi : wide;
+            switch (sel) {
+                case 2: ex = hi; break;
+                case 3: ex = wres > HW ? hi : wres; break;
+                case 4: ex = narrow ? hi : wres; break;
+                default: ex = dn;
+            }
+            ey = oh; eabs = true;
+        }
+        const int gx = dut->VIDEO_ARX & 0xfff, gy = dut->VIDEO_ARY & 0xfff, gax = (dut->VIDEO_ARX >> 12) & 1, gay = (dut->VIDEO_ARY >> 12) & 1;
+        printf("scale: Scale %d (SCALE %d) Aspect %d, picture %d rows of %d pixels, scaler %d x %d: core asks for %s%d x %s%d; rule gives %s%d x %s%d%s\n",
+               menu, sel, ar, rows, w, HW, HH, gax ? "" : "ratio ", gx, gay ? "" : "ratio ", gy, eabs ? "" : "ratio ", ex, eabs ? "" : "ratio ", ey,
+               checked ? "" : " (not checked)");
+        if (checked && (gx != ex || gy != ey || gax != (int)eabs || gay != (int)eabs)) { printf("  FAIL: the size asked of the scaler\n"); errors++; }
+        if (eabs && (HH - ey) < 0) printf("  note: the height asked for is %d pixels over the scaler's\n", ey - HH);
     }
 #ifdef PROBE
     printf("probe: status[9]=%u  core de clocks %u  core cen_pix ticks %u  max core rgb %06x  max overlay out %06x  VGA nonzero clocks %u (in DE %u)\n",

@@ -18,8 +18,8 @@ No ROMs or other copyrighted data are in this repository; you supply your own MA
 
 **Tested on a real MiSTer** by the repository owner, all of it working: the World, USA and Japan sets; the picture, the
 intro and in-game music, the sound effects and the controls through several rounds of play; HDMI through a RetroTINK 4K on
-Direct Video (59.18 Hz) and a 15 kHz analog output; CRT Adjust and Flip Screen. (The first board test found two faults that
-no simulation could show -- see "Release history".)
+Direct Video (59.18 Hz) and a 15 kHz analog output; CRT Adjust and Flip Screen; and, in build 20261014, fast loading and
+the Scale options. (The first board test found two faults that no simulation could show -- see "Release history".)
 
 What was checked besides, in simulation and in the Quartus tool flow, against MAME 0.289 (the reference for every
 comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
@@ -65,9 +65,9 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   DDR3 model with random `BUSY`, with the option switched on and off at random points inside frames; every visible pixel
   of every frame is checked (turned 180 degrees from the frame before, or unchanged). 0 errors, 40 frames.
 * **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7: 48 % of the ALMs
-  (19,942 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
-  at 96 MHz with every check positive (setup +0.27 ns, hold +0.18, recovery +1.84, removal +0.76 in the slow 100 C
-  model; `releases/monstermaulers_20261012.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
+  (20,384 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
+  at 96 MHz with every check positive (setup +0.28 ns, hold +0.25, recovery +1.70, removal +0.83 in the slow 100 C
+  model; `releases/monstermaulers_20261014.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
   brightness -> divide-by-255 step, which is two stages now, and the diagnostic overlay's status word is registered; the
   frame corpus is unchanged by either.
 * **K054539 against MAME, chip level** (`sim/run_k539.sh`): the Z80's register writes to both chips are logged from MAME
@@ -76,6 +76,45 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   of the intro music (56-68 s and 80-95 s), low-passed correlation 0.94-0.98. The latch semantics replay bit-identical.
 
 ## Release history
+
+**20261014** -- Fast loading. The MRAs now carry `address="0x32000000"` on the ROM image's `<rom>` (the attribute the
+Namco NB-2 core uses): a recent Main_MiSTer then does not stream the 22 MB image through the HPS port a byte at a time
+(about 23-25 s on the board that was timed), but copies the assembled image into the DDR3 in one go and ends a download
+that has no data, only a start address: the image's length. The core stays in reset, reads the image back from the DDR3
+in 256-byte blocks (`mm_mem.sv`, `FL_BASE` = byte 0x32000000, outside the ROZ data and the Flip Screen buffers) and
+pushes the words into the same loader FIFO the streamed bytes go through, so the memory layout, the cache sweep, the
+memory test and the diagnostic overlay's download square all behave as before; the core's loader takes the whole image
+in 0.95 s (90.7 million clocks at 96 MHz), against the streaming's 23-25 s. A Main_MiSTer that does not know the attribute
+streams the bytes as before (`ioctl_addr` is 0 at the start of such a download, which is how the two are told apart), so
+the same RBF and MRAs work with both. The fit is 20,384 ALMs and 549 of 553 M10K, with timing positive everywhere on
+fitter seed 2 (the project's seed is 2 from this build: the first fit, with seed 1, missed by 0.41 ns inside the
+framework's scaler, `ascal`'s `o_hcpt` -> `o_vcpt`, on a path this repository's code is not on). The first version of the
+replay deadlocked at the ROZ characters (image offset
+0x640000): the loader's DDR3 writes need the state machine that the replay held while the FIFO was full. The replay
+now gives the state machine up when the FIFO has no room (the bench found it, `FLTRACE=1`), and the whole image goes
+through. Checked in simulation: `sim/run_memrd.sh` with `FAST=1` (the memory subsystem alone, random DDR3 `BUSY`, every
+region read back through the machine's ports, 0 errors) and `sim/emu/run_emu.sh` with `FAST=1` (the whole top level:
+the HPS side of the attribute modelled, then the image compared word for word with the chips, then frames). Tested on a
+real MiSTer by the repository owner: fast loading and the Scale options work.
+
+**20261013** (built and packaged, not released on its own: it is in 20261014) -- Scale in the OSD: Normal, V-Integer, HV-Integer, Narrower HV-Integer and HV-Integer+, the integer scaling
+of the framework's `video_freak` (the same menu as rmonic79's Arcade-Raiden core), for the HDMI scaler. The module sits after
+`arcade_video` and measures the finished picture's rows and width, so it follows the scandoubler and CRT Adjust, and works out
+the size from the scaler's own output size (`HDMI_WIDTH` / `HDMI_HEIGHT`); `VIDEO_ARX` / `VIDEO_ARY` come from it instead
+of from the Aspect ratio setting directly, and with Scale on Normal they are the same values as before. The analog output is
+not affected. Full Screen has no proportions for the integer rule to size the width from (ARX = ARY = 0), and the module
+then sizes the *height* from the width and asks for more rows than the screen has (1344 on a 1080p display); with an
+integer Scale the core gives Full Screen the scaler's own proportions instead, so it comes out as a whole-number size in the
+screen's aspect ratio. In simulation (`sim/emu/run_emu.sh` with `SCALE=`, `AR=`, `HW=`, `HH=`; the whole top level) the size
+the core asks the scaler for was compared with the integer rule worked out in the bench from the picture's rows and width,
+in 72 runs over the five Scale modes, the aspect settings (Original, Full Screen, ARC1), scaler sizes from 640 x 480 to
+3840 x 2160 and the scandoubler modes (HQ2x, CRT 50 %, forced): all equal, with a scaler too small for a whole multiple
+(200 x 150) and an unknown one (0 x 0, Direct Video) passing the aspect ratio through unchanged, and no frame or timing
+difference with Scale on Normal. The picture is nearly square-pixelled, so HV-Integer and Narrower HV-Integer give the same
+size at every common screen size (they differ only where the aspect width falls nearer the upper multiple, as in Full
+Screen at 1080p: 1728 against 1440 pixels wide). The scaler picture of a 110-frame whole-top-level run is byte-identical
+to 20261012's. The fit is 20,279 ALMs (the module's multiplier and divider) and 549 of 553 M10K, with timing positive
+everywhere. Tested on a real MiSTer in 20261014, which carries it: the Scale options work.
 
 **20261012** -- Scandoubler Fx and MiSTer.ini's `forced_scandoubler` no longer freeze the picture. With the scandoubler
 on (HQ2x, the CRT filters, or `forced_scandoubler=1`) the core's output had no vertical sync at all: the monitor, or the
@@ -131,25 +170,40 @@ showed were fixed before it:
   writes are held until key-on, MAME's default) was missing, and the reverb ring index lacked MAME's second add of the
   position. The sum of the two chips also saturates now, as MAME's does, instead of wrapping.
 
-The 20261012 RBF is the one that was played on the board (it differs from 20261011, which carried the Red Dragon fix,
-only in the blank wiring above). Its fitter and timing summaries are `releases/monstermaulers_20261012.fit.summary`,
-`.sta.summary` and `.ram_depths.txt` (those of the earlier builds are in the repository's history).
+The 20261014 RBF is the one that was played on the board for fast loading and the Scale options (20261012, before it,
+differs from 20261011, which carried the Red Dragon fix, only in the blank wiring above; 20261013 was the Scale option
+alone and was not released separately). The fitter and timing summaries of the release are
+`releases/monstermaulers_20261014.fit.summary`, `.sta.summary` and `.ram_depths.txt` (those
+of the earlier builds are in the repository's history).
 
 ## Install
 
-1. Unzip the release's `MonsterMaulers_MiSTer_20261012.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/monstermaulers_20261012.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
+1. Unzip the release's `MonsterMaulers_MiSTer_20261014.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/monstermaulers_20261014.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `monstermaulers_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `monstermaulers_*.rbf` files.
 2. Put your MAME 0.289 `mmaulers.zip` in `/media/fat/games/mame/` (the parent set; the USA and Japan versions'
    ROMs are in the merged set, or in `mmaulersu.zip` / `dadandrn.zip` next to it). No ROMs are distributed here.
-3. Start `Monster Maulers (World ver EAA)` from the Arcade menu. The ROM image is 22 MB and takes a few seconds to load.
+3. Start `Monster Maulers (World ver EAA)` from the Arcade menu. The ROM image is 22 MB. With a recent Main_MiSTer (one
+   that knows the MRA's `address=` attribute) it is copied to the DDR3 in one go and loaded in about a second; an older
+   one streams it through the HPS port, which takes 20-25 s.
+
+### Fast loading
+
+The three MRAs carry `address="0x32000000"` on the ROM image. A Main_MiSTer that supports that attribute copies the
+assembled 22 MB image into the DDR3 in one go instead of streaming it through the HPS port a byte at a time, and the core
+reads it back from there into its loader: the load takes about a second, against the 23-25 s of the board that was timed.
+There is nothing to set. A Main_MiSTer that ignores the attribute streams the image as before, with the same RBF and MRAs.
+To see which of the two you got, switch on the Diagnostic overlay (see below): the *download* square (row 0, 11th from
+the left) is lit for about a second with fast loading and for 20 seconds or more without. The game's own power-on memory
+check (about 22 s, as in MAME) comes after the load either way. How it works: `docs/mister-memory.md`, "Fast load".
 
 ## OSD options
 
 | Option | Values | |
 |---|---|---|
 | Aspect ratio | Original, Full Screen, [ARC1], [ARC2] | Original is 4:3 |
+| Scale | Normal, V-Integer, HV-Integer, Narrower HV-Integer, HV-Integer+ | Integer scaling for the HDMI scaler (the framework's `video_freak`; the 15 kHz analog output is not touched). Normal leaves the picture's size to the scaler and the Aspect ratio. The others ask for a whole-number size: the largest whole multiple of the picture's height that fits the screen, and then a width of the aspect ratio's (V-Integer) or a whole multiple of the picture's width (the HV modes: Narrower takes the multiple below the aspect ratio's width, HV-Integer+ the one above it while it fits, HV-Integer the nearer of the two). Examples at 1080p: V-Integer 1194 x 896, HV-Integer and Narrower 1152 x 896 (every pixel 4 x 4), HV-Integer+ 1440 x 896. With Full Screen the screen's own proportions are used for the width |
 | Flip Screen | Off, On | The picture turned 180 degrees on every output. Done on the finished picture through a frame buffer in the DDR3, so it adds one frame (17 ms) of delay while it is on and nothing when it is off. See below |
 | Scandoubler Fx | None, HQ2x, CRT 25%, CRT 50%, CRT 75% | |
 | CRT Adjust | submenu: CRT Adjust Off, On; then CRT H-Size 0..+4 / -16..-1, CRT H-Position -48..+20, CRT V-Shift -16..+15 | Fits the picture to a 15 kHz analog (CRT) output: its width, its place in the line and its place in the frame, without the monitor losing sync. Does nothing while the scandoubler is in use. Off by default. See below |
@@ -159,8 +213,10 @@ only in the blank wiring above). Its fitter and timing summaries are `releases/m
 | SDRAM read capture | Normal, Late | Late samples SDRAM reads one clock later, for a module that answers slowly; try it if the picture is garbage and the overlay shows the SDRAM regions red. At this core's clock phase it is expected to make no difference |
 | Reset | | Restarts the machine (the ROM stays loaded) |
 
-**Reading the diagnostic overlay.** Turn it on *before* the ROM loads (OSD, then load the game again), or the memory test is
-skipped and its squares stay dark. Row 0: frame counter, PLL locked, memory ready, download, test hold, core reset, IRQ5,
+**Reading the diagnostic overlay.** Turn it on *before* the ROM loads, or the memory test is skipped and its squares stay
+dark. MiSTer starts a game with the settings that were *saved*, so set Diagnostic overlay to On, choose **Save settings** at
+the bottom of the OSD, and then load the game again (set it Off and save again afterwards); an option that is only switched
+on in the OSD is gone when the game is loaded again. Row 0: frame counter, PLL locked, memory ready, download, test hold, core reset, IRQ5,
 68000 stepped, core resets seen, test done / running, tile RAM ok, Z80 stepped. Row 1: the 68000's address, then the seven
 regions read back equal to what was loaded (prog, snd, tile, chr, map, pcm, spr) and sound heard. Row 2: the same regions
 read stably twice, DDR3 FIFO overflow, the number of lines last frame that a renderer had not finished when the line's

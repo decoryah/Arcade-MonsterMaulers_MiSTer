@@ -54,6 +54,20 @@ word by image offset, computes its address (the interleaves above) and writes it
 beat with byte enables. The caches are swept on every download start. The default EEPROM is a separate download (MRA index 2),
 and the same index is used to save and restore it (`<nvram>`).
 
+### Fast load (the MRA's `address=` attribute)
+With `address="0x32000000"` on the index-0 `<rom>`, a recent Main_MiSTer copies the whole assembled image into the DDR3 at that
+byte address in one `memcpy`, bracketed by a download that has no data bytes: it starts with `ioctl_addr` = the image's length
+(an ordinary download starts at 0, which is how `MonsterMaulers.sv` tells them apart: `fast_dl`) and ends with it. The core stays in
+reset from the start until `mm_mem` has pushed the whole image through the loader (`fl_done`). `mm_mem` reads the image back in
+256-byte blocks (a 32-beat burst, the same burst and buffer as a ROZ character block, which are idle in reset), swaps each
+little-endian halfword to the image's big-endian word and pushes it into the loader's FIFO, as long as the FIFO has room; the dispatcher
+behind it is unchanged, so the layout is the one above. Nothing else of the DDR3 is touched: the window's offset 0x400000 beats
+(byte 0x32000000) is clear of the ROZ data (0 to 0x50000 beats) and the Flip Screen buffers (0x80000). One rule: a block that finds
+the FIFO full goes back to the idle state of the DDR3 state machine and resumes there, because the loader's own DDR3 writes (ROZ
+characters and map) are served from it and sit at the head of the FIFO. The loader accepts about a word per 8 clocks, so the 11.7
+million words take 90.7 million clocks (0.95 s); that, not the DDR3, is the limit. `sim/run_memrd.sh` with `FAST=1` and
+`sim/emu/run_emu.sh` with `FAST=1` model the HPS side.
+
 ## Video
 
 The 6 MHz pixel clock comes from the 96 MHz system clock (a pixel every 16 clocks; a 384-pixel line is 6,144 clocks, the budget the
