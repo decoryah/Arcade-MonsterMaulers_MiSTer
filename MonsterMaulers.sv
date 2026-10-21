@@ -98,7 +98,7 @@ localparam CONF_STR = {
 	"O[10],SDRAM read capture,Normal,Late;",
 	"-;",
 	"R0,Reset;",
-	"J1,Button 1,Button 2,Button 3,Start,Coin;",
+	"J1,Weak Attack,Medium Attack,Strong Attack,Start,Coin;",
 	"jn,A,B,R,Start,Select;",
 	"V,v",`BUILD_DATE
 };

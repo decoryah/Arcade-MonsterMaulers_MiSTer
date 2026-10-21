@@ -65,9 +65,9 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   DDR3 model with random `BUSY`, with the option switched on and off at random points inside frames; every visible pixel
   of every frame is checked (turned 180 degrees from the frame before, or unchanged). 0 errors, 40 frames.
 * **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7: 48 % of the ALMs
-  (20,384 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
-  at 96 MHz with every check positive (setup +0.28 ns, hold +0.25, recovery +1.70, removal +0.83 in the slow 100 C
-  model; `releases/monstermaulers_20261014.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
+  (20,312 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
+  at 96 MHz with every check positive (setup +0.40 ns, hold +0.24, recovery +1.21, removal +0.78 in the slow 100 C
+  model; `releases/monstermaulers_20261021.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
   brightness -> divide-by-255 step, which is two stages now, and the diagnostic overlay's status word is registered; the
   frame corpus is unchanged by either.
 * **K054539 against MAME, chip level** (`sim/run_k539.sh`): the Z80's register writes to both chips are logged from MAME
@@ -76,6 +76,16 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   of the intro music (56-68 s and 80-95 s), low-passed correlation 0.94-0.98. The latch semantics replay bit-identical.
 
 ## Release history
+
+**20261021** -- The buttons have their real names. The three MRAs (the `<buttons>` line, which MiSTer's "Define joystick
+buttons" menu shows in place of the core's own) and the OSD string in `MonsterMaulers.sv` (`J1`) called the game's buttons
+"Button 1 / Button 2 / Button 3"; they now say **Weak Attack, Medium Attack, Strong Attack** (the names the arcade
+database gives the board's three buttons), with Start and Coin as before. Every entry is a wired input: the three buttons
+and Start reach the game for both players, Coin is each player's coin input, and the board reads no third or fourth player
+(MAME defines their ports but maps them nowhere), so no mapping entry goes unused. The default gamepad mapping (A / B / R /
+Start / Select) is unchanged, and so is everything else: the RTL is that of 20261014 except for the OSD string, and the
+fit is 20,312 ALMs and 549 of 553 M10K with timing positive everywhere (fitter seed 2 again, first try). Not yet tested on a
+real MiSTer. The attack order (button 1 weak, 3 strong) is the one the arcade database lists.
 
 **20261014** -- Fast loading. The MRAs now carry `address="0x32000000"` on the ROM image's `<rom>` (the attribute the
 Namco NB-2 core uses): a recent Main_MiSTer then does not stream the 22 MB image through the HPS port a byte at a time
@@ -172,14 +182,14 @@ showed were fixed before it:
 
 The 20261014 RBF is the one that was played on the board for fast loading and the Scale options (20261012, before it,
 differs from 20261011, which carried the Red Dragon fix, only in the blank wiring above; 20261013 was the Scale option
-alone and was not released separately). The fitter and timing summaries of the release are
-`releases/monstermaulers_20261014.fit.summary`, `.sta.summary` and `.ram_depths.txt` (those
+alone and was not released separately); 20261021 differs from it only in the button names. The fitter and timing
+summaries of the release are `releases/monstermaulers_20261021.fit.summary`, `.sta.summary` and `.ram_depths.txt` (those
 of the earlier builds are in the repository's history).
 
 ## Install
 
-1. Unzip the release's `MonsterMaulers_MiSTer_20261014.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/monstermaulers_20261014.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
+1. Unzip the release's `MonsterMaulers_MiSTer_20261021.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/monstermaulers_20261021.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `monstermaulers_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `monstermaulers_*.rbf` files.
 2. Put your MAME 0.289 `mmaulers.zip` in `/media/fat/games/mame/` (the parent set; the USA and Japan versions'
@@ -234,7 +244,8 @@ blank. The core now gives it the horizontal blank alone (`hde` from `mm_video.sv
 15 kHz picture and its timing are as they were (see `docs/mister-memory.md`).
 
 The game is horizontal (ROT0), so there is no rotation option. On a gamepad the default mapping is A / B / R for
-buttons 1 / 2 / 3, Start for Start and Select for Coin (remap it in MiSTer's usual way). Two players; the board has no
+Weak / Medium / Strong Attack (the three buttons of the board, named so in MiSTer's button-mapping menu), Start for Start
+and Select for Coin (remap it in MiSTer's usual way). Two players; the board has no
 inputs for a third and fourth. From the keyboard: 1 / 2 start, 5 / 6 coin and F2 for the test switch, on top of
 MiSTer's usual keyboard-as-joystick. The game's own settings and high scores live in its EEPROM, which MiSTer saves and
 restores.

@@ -134,7 +134,7 @@ def mra(setname, title, region, prog, nvdata):
     </rom>
     <nvram index="2" size="128"/>
 
-    <buttons names="Button 1,Button 2,Button 3,Start,Coin" default="A,B,R,Start,Select" count="3"/>
+    <buttons names="Weak Attack,Medium Attack,Strong Attack,Start,Coin" default="A,B,R,Start,Select" count="3"/>
 </misterromdescription>
 """
 
