@@ -83,6 +83,7 @@ localparam CONF_STR = {
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[34:32],Scale,Normal,V-Integer,HV-Integer,Narrower HV-Integer,HV-Integer+;",
+	"O[35],Colours,Board DAC,MAME;",
 	"O[12],Flip Screen,Off,On;",
 	"O[5:3],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"P1,CRT Adjust;",
@@ -421,11 +422,22 @@ wire [95:0] ovl_status_d = {
 // path from there through the overlay and the flip stage is longer than a clock; the panel is not time-critical
 reg  [95:0] ovl_status;
 always @(posedge clk_sys) ovl_status <= ovl_status_d;
+// Colours: the board's video DAC (a Konami 054573 per channel) is not linear: its output rises faster near the top,
+// so mid tones come out darker than MAME's straight 8-bit palette. Board DAC looks each channel up in the DAC's curve
+// (tools/make_dac_table.py: 0 stays 0 and 255 stays 255, this game writing the full range); MAME passes the palette
+// through. After the mixer, so a fade's brightness is in the code the table sees (on the board it scales the DAC's
+// current instead, which makes faded mid tones a little brighter there). As in the Gaiapolis core, but not registered:
+// this mixer's colour is final only in the clock its pixel enable is high (rtl/mm_mixer.sv), so a register here would
+// hand the next stage the half-painted pixel of the clock before -- in the bench, a black picture
+(* romstyle = "logic" *) reg [7:0] dac_tab [256];
+initial $readmemh("rtl/data/k054573_dac.hex", dac_tab);
+wire [23:0] dac_rgb = status[35] ? mm_rgb : {dac_tab[mm_rgb[23:16]], dac_tab[mm_rgb[15:8]], dac_tab[mm_rgb[7:0]]};
+
 wire [7:0] ovl_r, ovl_g, ovl_b;
 dbg_overlay ovl
 (
 	.clk(clk_sys), .cen_pix(mm_cen_pix), .enable(status[9]), .de(mm_de), .vsync(mm_vs),
-	.r_in(mm_rgb[23:16]), .g_in(mm_rgb[15:8]), .b_in(mm_rgb[7:0]),
+	.r_in(dac_rgb[23:16]), .g_in(dac_rgb[15:8]), .b_in(dac_rgb[7:0]),
 	.status(ovl_status), .r_out(ovl_r), .g_out(ovl_g), .b_out(ovl_b)
 );
 

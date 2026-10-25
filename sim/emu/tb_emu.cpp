@@ -197,6 +197,7 @@ int main(int argc, char **argv) {
         if (getenv("SCALE")) field(32, 3, atoi(getenv("SCALE")));
         if (getenv("AR")) field(121, 2, atoi(getenv("AR")));
     }
+    if (getenv("COLOURS_MAME") && atoi(getenv("COLOURS_MAME"))) set_status(35, 1);   // Colours: MAME's (the default is the board DAC's)
     if (getenv("MONO") && atoi(getenv("MONO"))) set_status(8, 1);
     if (getenv("TEST") && atoi(getenv("TEST"))) set_status(6, 1);
     run(40000);                                  // SDRAM init, cache sweeps
@@ -266,6 +267,7 @@ int main(int argc, char **argv) {
             if (bad_w) { printf("  FAIL: the streamed image is not where the ports read it\n"); errors++; }
         }
         download(2, nv.data(), 128, 40);
+        if (getenv("DIAG_LATE") && atoi(getenv("DIAG_LATE"))) set_status(9, 1);   // the overlay without the memory test
         printf("EEPROM default loaded; frames so far %d\n", frames_done);
     }
 

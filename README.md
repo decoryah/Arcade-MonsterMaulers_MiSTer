@@ -18,8 +18,8 @@ No ROMs or other copyrighted data are in this repository; you supply your own MA
 
 **Tested on a real MiSTer** by the repository owner, all of it working: the World, USA and Japan sets; the picture, the
 intro and in-game music, the sound effects and the controls through several rounds of play; HDMI through a RetroTINK 4K on
-Direct Video (59.18 Hz) and a 15 kHz analog output; CRT Adjust and Flip Screen; and, in build 20261014, fast loading and
-the Scale options. (The first board test found two faults that no simulation could show -- see "Release history".)
+Direct Video (59.18 Hz) and a 15 kHz analog output; CRT Adjust and Flip Screen; in build 20261014, fast loading and
+the Scale options; in build 20261025, the Colours option's board DAC curve. (The first board test found two faults that no simulation could show -- see "Release history".)
 
 What was checked besides, in simulation and in the Quartus tool flow, against MAME 0.289 (the reference for every
 comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
@@ -65,9 +65,9 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   DDR3 model with random `BUSY`, with the option switched on and off at random points inside frames; every visible pixel
   of every frame is checked (turned 180 degrees from the frame before, or unchanged). 0 errors, 40 frames.
 * **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7: 48 % of the ALMs
-  (20,312 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
-  at 96 MHz with every check positive (setup +0.40 ns, hold +0.24, recovery +1.21, removal +0.78 in the slow 100 C
-  model; `releases/monstermaulers_20261021.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
+  (20,587 of 41,910), 99 % of the block RAM (549 of 553 M10K, so there is almost none left), 69 DSPs, and timing closes
+  at 96 MHz with every check positive (setup +0.63 ns, hold +0.25, recovery +1.89, removal +0.96 in the slow 100 C
+  model; `releases/monstermaulers_20261025.sta.summary`). The first fit missed by 2 ns at the mixer's palette ->
   brightness -> divide-by-255 step, which is two stages now, and the diagnostic overlay's status word is registered; the
   frame corpus is unchanged by either.
 * **K054539 against MAME, chip level** (`sim/run_k539.sh`): the Z80's register writes to both chips are logged from MAME
@@ -76,6 +76,26 @@ comparison; MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   of the intro music (56-68 s and 80-95 s), low-passed correlation 0.94-0.98. The latch semantics replay bit-identical.
 
 ## Release history
+
+**20261025** -- Colours in the OSD: **Board DAC** (the default) or **MAME**. The board turns each 8-bit colour into a
+voltage with a Konami K054573 per channel, and that DAC is not linear: its output rises faster near the top, so mid tones
+come out darker than MAME's straight palette (mid grey 128 comes out as about 60 of 255). Board DAC looks each channel up
+in the DAC's curve (`rtl/data/k054573_dac.hex`, written by `tools/make_dac_table.py`: 0 stays 0 and 255 stays 255, this
+game using the full range); MAME is the old output. The curve is the model of the Gaiapolis core (gaiapolis-mister),
+traced from Ace's K054573 reproduction (Gerbers and BOM; Monster Maulers is among the games that use the chip) and fitted
+to a Gaiapolis PCB recording. There is no recording of a Monster Maulers PCB, so it was checked against one of
+Metamorphic Force, the same chip family: two scenes paired with MAME's identical frames (the heroes over the earth, the
+mountain island), with the recording's own gain and offset per channel free, give an rms error of 17.2 and 14.0 levels
+for a linear DAC, 3.7 for the best plain gamma (2.0-2.2) and 3.3 / 4.3 for the DAC model. A KLOV capture of this game's
+title screen pairs exactly with MAME's but has only five flat colours and an unknown capture chain, and was not used.
+The table sits after the mixer, before the diagnostic overlay, Flip Screen, CRT Adjust and the scaler, and takes no
+block RAM. Unlike Gaiapolis's it is not registered: this mixer's colour is final only in the clock its pixel enable is
+high, and the bench showed a registered table passing on the half-painted pixel of the clock before (a black picture).
+On the board a fade's brightness scales the DAC's current rather than the code, so faded mid tones there are a little
+brighter than here. In simulation (`sim/emu/run_emu.sh`, `COLOURS_MAME=1`; `sim/emu/dac_check.py`): with MAME the scaler
+picture of a 110-frame run is byte-identical to 20261021's, and with Board DAC every channel value of it is the table of
+the MAME run's at the same place. The fit is 20,587 ALMs and 549 of 553 M10K, timing positive everywhere. Tested on a
+real MiSTer by the repository owner: the colours are right ("perfect"), and the build runs as before.
 
 **20261021** -- The buttons have their real names. The three MRAs (the `<buttons>` line, which MiSTer's "Define joystick
 buttons" menu shows in place of the core's own) and the OSD string in `MonsterMaulers.sv` (`J1`) called the game's buttons
@@ -180,16 +200,17 @@ showed were fixed before it:
   writes are held until key-on, MAME's default) was missing, and the reverb ring index lacked MAME's second add of the
   position. The sum of the two chips also saturates now, as MAME's does, instead of wrapping.
 
-The 20261014 RBF is the one that was played on the board for fast loading and the Scale options (20261012, before it,
+The 20261025 RBF is the one that was played on the board for the Colours option, and 20261014's for fast loading and the
+Scale options (20261012, before it,
 differs from 20261011, which carried the Red Dragon fix, only in the blank wiring above; 20261013 was the Scale option
-alone and was not released separately); 20261021 differs from it only in the button names. The fitter and timing
-summaries of the release are `releases/monstermaulers_20261021.fit.summary`, `.sta.summary` and `.ram_depths.txt` (those
+alone and was not released separately); 20261021 differs from it only in the button names and 20261025 in the Colours
+option. The fitter and timing summaries of the release are `releases/monstermaulers_20261025.fit.summary`, `.sta.summary` and `.ram_depths.txt` (those
 of the earlier builds are in the repository's history).
 
 ## Install
 
-1. Unzip the release's `MonsterMaulers_MiSTer_20261021.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/monstermaulers_20261021.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
+1. Unzip the release's `MonsterMaulers_MiSTer_20261025.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/monstermaulers_20261025.rbf`) to `/media/fat/_Arcade/cores/` and the three `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `monstermaulers_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `monstermaulers_*.rbf` files.
 2. Put your MAME 0.289 `mmaulers.zip` in `/media/fat/games/mame/` (the parent set; the USA and Japan versions'
@@ -214,6 +235,7 @@ check (about 22 s, as in MAME) comes after the load either way. How it works: `d
 |---|---|---|
 | Aspect ratio | Original, Full Screen, [ARC1], [ARC2] | Original is 4:3 |
 | Scale | Normal, V-Integer, HV-Integer, Narrower HV-Integer, HV-Integer+ | Integer scaling for the HDMI scaler (the framework's `video_freak`; the 15 kHz analog output is not touched). Normal leaves the picture's size to the scaler and the Aspect ratio. The others ask for a whole-number size: the largest whole multiple of the picture's height that fits the screen, and then a width of the aspect ratio's (V-Integer) or a whole multiple of the picture's width (the HV modes: Narrower takes the multiple below the aspect ratio's width, HV-Integer+ the one above it while it fits, HV-Integer the nearer of the two). Examples at 1080p: V-Integer 1194 x 896, HV-Integer and Narrower 1152 x 896 (every pixel 4 x 4), HV-Integer+ 1440 x 896. With Full Screen the screen's own proportions are used for the width |
+| Colours | Board DAC, MAME | Board DAC (the default) gives the board's video DAC curve: mid tones darker than MAME's linear palette, as on the PCB. MAME is the palette as it is. See "Release history", 20261025 |
 | Flip Screen | Off, On | The picture turned 180 degrees on every output. Done on the finished picture through a frame buffer in the DDR3, so it adds one frame (17 ms) of delay while it is on and nothing when it is off. See below |
 | Scandoubler Fx | None, HQ2x, CRT 25%, CRT 50%, CRT 75% | |
 | CRT Adjust | submenu: CRT Adjust Off, On; then CRT H-Size 0..+4 / -16..-1, CRT H-Position -48..+20, CRT V-Shift -16..+15 | Fits the picture to a 15 kHz analog (CRT) output: its width, its place in the line and its place in the frame, without the monitor losing sync. Does nothing while the scandoubler is in use. Off by default. See below |
@@ -336,6 +358,14 @@ of a MHz, so a thousand frames takes hours.
   (`modules/crt-adjust/crt_adjust.sv`, with a one-line sign fix noted in `modules/VENDOR.md`; GPL-3.0 or later).
 * **furrtek** -- [SiliconRE](https://github.com/furrtek/SiliconRE/tree/master/Konami)'s silicon-traced models and notes of
   the K053252 timing chip (the raster), the K054338 and K055555.
+* The Colours option: **Ace**'s Gerbers and BOM of the
+  [K054573 / K054574 reproductions](https://www.ukvac.com/forum/threads/konami-054573-and-054574-reproductions.84054/)
+  (the DAC circuit the model is traced from, and the list of games that use it), SiliconRE's
+  [K054338 trace](https://github.com/furrtek/SiliconRE/tree/master/Konami/054338) (plain integer maths: the curve is
+  the DAC's), and **Franck78**'s [Konami Gaiapolis schematic](https://github.com/Franck78/The-Konami-Gaiapolis-schematic)
+  (the video DAC chain of the board family). The model and its fit to PCB footage come from the repository owner's
+  Gaiapolis core ([Arcade-Gaiapolis_MiSTer](https://github.com/decoryah/Arcade-Gaiapolis_MiSTer)); the check for this
+  game used the "ARCADE PCB - METAMORPHIC FORCE - Ver AAA - 1CC" recording of a real board.
 * **Jose Tejada (jotego)** -- JTFRAME's MiSTer SDRAM clock phase and read-capture timing, which this core's PLL and
   controller settings follow.
 

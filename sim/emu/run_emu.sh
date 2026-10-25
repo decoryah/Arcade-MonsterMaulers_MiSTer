@@ -8,6 +8,10 @@
 # where they start after the hsync pulse, how wide, the first row's distance from the vsync pulse): with CRT=1 and
 # the amounts at 0 it must equal the run without it, and the scaler picture (out prefix _scaler.ppm) must be byte
 # for byte the same
+# COLOURS_MAME=1: the OSD's Colours = MAME (the palette as it is; the default is the board DAC's table): sim/emu/dac_check.py
+# compares the scaler pictures of the two runs
+# DIAG_LATE=1: the diagnostic overlay switched on after the load (its flags without the memory test that holding it on
+# during the load starts)
 # Scale: SCALE=0..4 (the OSD's Scale: Normal, V-Integer, HV-Integer, Narrower HV-Integer, HV-Integer+), AR=0..3 (Aspect
 # ratio: Original, Full Screen, ARC1, ARC2) and HW / HH (the scaler's output size, default 1920 x 1080) are set, and the
 # size the core asks the scaler for (VIDEO_ARX / VIDEO_ARY) is checked against the framework's rule (see tb_emu.cpp)
